@@ -22,7 +22,7 @@ def prepare(patches, patch_meta, sampleid_name='id', frac_train=0.8, n_examples=
 
     return patch_meta, sampleids, x_train, sids_train, x_test, sids_test, x_test_examples, sids_test_examples
 
-@tf.keras.saving.register_keras_serializable()
+@tf.keras.utils.register_keras_serializable()
 class AE(tf.keras.Model):
     """Convolutional variational autoencoder."""
 
@@ -115,13 +115,13 @@ def train(model, x_train, x_val, on_epoch_end=None, batch_size=256, n_epochs=5,
     lr_schedule = ExponentialDecay(
         1e-4,
         decay_steps=len(x_train) // batch_size,
-        decay_rate=0.5,
+        decay_rate=0.7, #0.5,
         staircase=True)
 
     losses = []; val_losses = []; rlosses = []; val_rlosses = []
     epochids = []; batchids = []
     learning_rates = []
-    optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=lr_schedule, clipvalue=1)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule, clipvalue=1)
 
     for epoch in range(n_epochs):
         print(f"Epoch {epoch + 1} of {n_epochs}")
