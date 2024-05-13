@@ -1,12 +1,14 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-def plot(model, epoch, test_sample, sids, show=True, rgb=False, pmin=None, pmax=None):
+def plot(model, epoch, test_sample, sids, show=True, rgb=False, channels=None, pmin=None, pmax=None):
     predictions = model(test_sample)
 
     if not rgb:
+        if channels is None:
+            channels = [0,1,2]
         fig = plt.figure(figsize=(32,3*4))
-        for j, channel in enumerate([0,1,2]):
+        for j, channel in enumerate(channels):
             vmin = -np.max(np.abs(test_sample[:,:,:,channel]))
             vmax = -vmin
             for i, (a, b) in enumerate(zip(predictions, test_sample)):
