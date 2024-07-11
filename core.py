@@ -21,24 +21,30 @@ class CVAE(nn.Module):
         
         self.encoder = nn.Sequential(
             nn.Conv2d(ncolors, self.nfilters1, kernel_size=3, stride=2, padding=1),
+            # nn.Conv2d(ncolors, self.nfilters1, kernel_size=4, stride=2, padding=1),
             nn.ReLU(),
             nn.Conv2d(self.nfilters1, self.nfilters2, kernel_size=3, stride=2, padding=1),
+            # nn.Conv2d(self.nfilters1, self.nfilters2, kernel_size=4, stride=2, padding=1),
             nn.ReLU(),
             nn.Flatten(),
-            nn.Linear((patch_size//4)*(patch_size//4)*self.nfilters2, latent_dim + latent_dim),
         )
+        self.encoder_end = nn.Linear((patch_size//4)*(patch_size//4)*self.nfilters2 + ncolors, latent_dim + latent_dim)
         
         self.decoder = nn.Sequential(
             nn.Linear(latent_dim, (patch_size//4)*(patch_size//4)*self.nfilters2),
             nn.Unflatten(1, (self.nfilters2, patch_size//4, patch_size//4)),
             nn.ReLU(),
             nn.ConvTranspose2d(self.nfilters2, self.nfilters1, kernel_size=3, stride=2, padding=1, output_padding=1),
+            # nn.ConvTranspose2d(self.nfilters2, self.nfilters1, kernel_size=4, stride=2, padding=1, output_padding=0),
             nn.ReLU(),
             nn.ConvTranspose2d(self.nfilters1, ncolors, kernel_size=3, stride=2, padding=1, output_padding=1),
+            # nn.ConvTranspose2d(self.nfilters1, ncolors, kernel_size=4, stride=2, padding=1, output_padding=0),
         )
 
     def encode(self, x : Tensor):
         output = self.encoder(x)
+        avg_profile = x.mean(axis=(2,3))
+        output = self.encoder_end(torch.cat((output, avg_profile), dim=1))
         mean, logvar = torch.split(output, self.latent_dim, dim=1)
         return mean, logvar
 
@@ -62,9 +68,22 @@ def kl_loss(mean : Tensor, logvar : Tensor):
         torch.sum(1 + logvar - mean.pow(2) - logvar.exp(),
         dim=1))
 
+def per_batch_logging(model : nn.Module, batch_num : int, rlosses : list, vaelosses : list,
+        kl_weight : float, log_interval : int, scheduler : LRScheduler):
+    lr = scheduler.get_last_lr()[0]
+    cur_rloss = np.mean(rlosses[-log_interval:])
+    cur_vaeloss = np.mean(vaelosses[-log_interval:])
+
+    print(f'batch {batch_num:5d} | '
+            f'lr {lr:.2g} | '
+            f'r-loss {cur_rloss:.2f} | '
+            f'vae-loss {cur_vaeloss:.2f} | '
+            f'kl-weight {kl_weight}')
+
 def train_one_epoch(model : nn.Module, train_dataset : Dataset,
         optimizer : torch.optim.Optimizer, scheduler : LRScheduler,
-        batch_size : int, log_interval : int=20, kl_weight : float=1):
+        batch_size : int, log_interval : int=20, kl_weight : float=1,
+        per_batch_logging=per_batch_logging):
     model.train()
     train_loader = DataLoader(
         dataset=train_dataset,
@@ -75,8 +94,6 @@ def train_one_epoch(model : nn.Module, train_dataset : Dataset,
 
     losses = []; vaelosses = []; rlosses = []
     for n, batch in enumerate(train_loader):
-        batch = batch.permute(0, 3, 1, 2)
-
         # Forward pass
         mean, logvar = model.encode(batch)
         z = model.reparameterize(mean, logvar)
@@ -99,7 +116,7 @@ def train_one_epoch(model : nn.Module, train_dataset : Dataset,
 
         # Log
         if n % log_interval == 0 and n > 0:
-            per_batch_logging(n, rlosses, vaelosses, kl_weight, log_interval, scheduler)
+            per_batch_logging(model, n, rlosses, vaelosses, kl_weight, log_interval, scheduler)
 
     return pd.DataFrame({'loss':losses, 'rloss':rlosses, 'vaeloss':vaelosses, 'kl_weight':kl_weight})
 
@@ -115,7 +132,6 @@ def evaluate(model : nn.Module, eval_dataset : Dataset, batch_size : int=1000,
     with torch.no_grad():
         for n, batch in enumerate(eval_loader):
             print('.', end='')
-            batch = batch.permute(0, 3, 1, 2)
             mean, _ = model.encode(batch)
             predictions = model.decode(mean)
 
@@ -129,25 +145,14 @@ def evaluate(model : nn.Module, eval_dataset : Dataset, batch_size : int=1000,
     else:
         return np.concatenate(rlosses).mean()
 
-def per_batch_logging(batch_num : int, rlosses : list, vaelosses : list,
-        kl_weight : float, log_interval : int, scheduler : LRScheduler):
-    lr = scheduler.get_last_lr()[0]
-    cur_rloss = np.mean(rlosses[-log_interval:])
-    cur_vaeloss = np.mean(vaelosses[-log_interval:])
-
-    print(f'batch {batch_num:5d} | '
-            f'lr {lr:.2g} | '
-            f'r-loss {cur_rloss:.2f} | '
-            f'vae-loss {cur_vaeloss:.2f} | '
-            f'kl-weight {kl_weight}')
-
 def simple_per_epoch_logging(model, epoch, epoch_start_time, rlosses, losslog):
     print(f'end of epoch {epoch}: avg val loss = {rlosses.mean()}')
 
 def full_training(model : nn.Module, train_dataset : Dataset,
         val_dataset : Dataset, optimizer : torch.optim.Optimizer,
         scheduler : LRScheduler, batch_size : int=128, n_epochs : int=10,
-        kl_weight : float=1, per_epoch_logging=simple_per_epoch_logging):
+        kl_weight : float=1, per_epoch_logging=simple_per_epoch_logging,
+        per_batch_logging=per_batch_logging):
     best_val_loss = float('inf')
     losslogs = []
 
@@ -157,7 +162,8 @@ def full_training(model : nn.Module, train_dataset : Dataset,
         for epoch in range(1, n_epochs + 1):
             epoch_start_time = time.time()
             losslog = train_one_epoch(
-                model, train_dataset, optimizer, scheduler, batch_size, kl_weight=kl_weight)
+                model, train_dataset, optimizer, scheduler, batch_size, kl_weight=kl_weight,
+                per_batch_logging=per_batch_logging)
             rlosses, _ = evaluate(model, val_dataset, detailed=True)
             scheduler.step()
 
