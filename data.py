@@ -62,7 +62,7 @@ all_transforms = [
     ]),
 ]
 
-def choose_patches(masks, patchsize, patchstride, extract_donor):
+def choose_patches(masks, patchsize, patchstride, extract_donor, max_frac_empty=0.2):
     patch_meta = []
 
     for sid, mask in masks.items():
@@ -70,7 +70,7 @@ def choose_patches(masks, patchsize, patchstride, extract_donor):
             [x, y]
             for x in range(0, mask.shape[0]-patchsize, patchstride)
             for y in range(0, mask.shape[1]-patchsize, patchstride)
-            if np.mean(mask[x:x+patchsize,y:y+patchsize]) > 0.8
+            if np.mean(mask[x:x+patchsize,y:y+patchsize]) > (1-max_frac_empty)
         ]).astype('int')
 
         donor = extract_donor(sid)
@@ -120,12 +120,13 @@ class ConcretePatchCollection(Dataset):
                 return torch.stack([self.transform(p) for p in self.patches[idx]])
 
 class PatchCollection(Dataset):
-    def __init__(self, patch_meta, samples, masks, patchsize, normalize='global', transform=None):
+    def __init__(self, patch_meta, samples, masks, patchsize, normalize='global', transform=None, add_mask=True):
         self.samples = samples
         self.masks = masks
         self.meta = patch_meta
         self.patchsize = patchsize
         self.nchannels = next(iter(samples.values())).shape[-1]
+        self.add_mask = add_mask
         
         if transform is None:
             self.mode = 'numpy'
@@ -136,6 +137,10 @@ class PatchCollection(Dataset):
 
         if normalize is not False:
             self.__preprocess__(normalize)
+
+        if self.add_mask:
+            for sid in self.samples.keys():
+                self.samples[sid] = np.concatenate([self.samples[sid], np.expand_dims(self.masks[sid], axis=-1)], axis=-1)
 
     def __preprocess__(self, style):
         if style == 'global':
@@ -175,12 +180,11 @@ class PatchCollection(Dataset):
         toget = self.meta.iloc[idx]
 
         if type(idx) == int:
+            patch = self.samples[toget.id][toget.x:toget.x+self.patchsize,toget.y:toget.y+self.patchsize]
             if self.mode == 'numpy':
-                return self.samples[toget.id][toget.x:toget.x+self.patchsize,toget.y:toget.y+self.patchsize]
+                return patch
             else:
-                return self.transform(
-                    self.samples[toget.id][toget.x:toget.x+self.patchsize,toget.y:toget.y+self.patchsize]
-                )
+                return self.transform(patch)
         else:
             patches = np.array([
                 self.samples[s][x:x+self.patchsize,y:y+self.patchsize]

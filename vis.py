@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from minisom import MiniSom
 from sklearn.preprocessing import scale
+import cv2
 import torch
 
 def plot_with_reconstruction(model, examples, show=True, channels=[0,1,2], pmin=None, pmax=None):
@@ -11,7 +12,7 @@ def plot_with_reconstruction(model, examples, show=True, channels=[0,1,2], pmin=
         means, _ = model.encode(examples)
         predictions = model.decode(means).permute(0,2,3,1).cpu().numpy()
     examples = examples.permute(0,2,3,1).cpu().numpy()
-    losses = np.mean((examples - predictions)**2, axis=(1,2,3))*examples.shape[1]*examples.shape[2]*examples.shape[3]
+    losses = np.mean((examples - predictions)**2, axis=(1,2,3))
 
 
     fig = plt.figure(figsize=(32,len(channels)*4))
@@ -116,6 +117,20 @@ def plot_patches_overlaychannels_som(examples, latent, colormaps, nx=5, ny=5, sh
     if show:
         plt.show()
 
+def plot_patches_overlaychannels_sorted(examples, colormaps, labels=None, nx=5, ny=5, show=True):
+    images = apply_colormap(examples, colormaps)
+    
+    fig, axs = plt.subplots(nx, ny, figsize=(nx,ny))
+    for i, a in enumerate(images[:nx*ny]):
+        plt.subplot(ny,nx,i+1)
+        plt.imshow(a)
+        if labels is not None:
+            plt.text(2, 10, f'{labels[i]}', color='white')
+        plt.axis('off')
+    plt.tight_layout()
+    if show:
+        plt.show()
+
 # each color channel should be a tuple of the form (channel, scaler)
 def plot_patches_fourcolors(examples, nx=5, ny=5,
             red=(None, None), cyan=(None, None), green=(None, None), yellow=(None, None), show=True):
@@ -131,3 +146,13 @@ def plot_patches_fourcolors(examples, nx=5, ny=5,
         colormaps.append([yellow[0], [1,1,0], yellow[1]])
 
     plot_patches_overlaychannels(examples, colormaps, nx=nx, ny=ny, show=show)
+
+def get_boundary(mask, color, thickness=10):
+    result = np.zeros((mask.shape[0], mask.shape[1], 4)).astype('float32')
+    if np.max(mask) == 0:
+        return result
+    mask = (mask / np.max(mask) * 255).astype('uint8')
+    ret, binary = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+    contours, hierarchy = cv2.findContours(binary.astype('uint8'), cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+    cv2.drawContours(result, contours, -1, color, thickness)
+    return result

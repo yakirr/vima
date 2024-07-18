@@ -13,18 +13,18 @@ class CVAE(nn.Module):
     """Convolutional variational autoencoder."""
 
     def __init__(self, ncolors : int, patch_size : int,
-            latent_dim: int=100, nfilters1: int=256, nfilters2: int=512):
+            latent_dim: int=100, nfilters1: int=256, nfilters2: int=512,
+            ignore_empty: bool=True):
         super().__init__()
         self.latent_dim = latent_dim
         self.nfilters1 = nfilters1
         self.nfilters2 = nfilters2
+        self.ignore_empty = ignore_empty
         
         self.encoder = nn.Sequential(
             nn.Conv2d(ncolors, self.nfilters1, kernel_size=3, stride=2, padding=1),
-            # nn.Conv2d(ncolors, self.nfilters1, kernel_size=4, stride=2, padding=1),
             nn.ReLU(),
             nn.Conv2d(self.nfilters1, self.nfilters2, kernel_size=3, stride=2, padding=1),
-            # nn.Conv2d(self.nfilters1, self.nfilters2, kernel_size=4, stride=2, padding=1),
             nn.ReLU(),
             nn.Flatten(),
         )
@@ -35,10 +35,8 @@ class CVAE(nn.Module):
             nn.Unflatten(1, (self.nfilters2, patch_size//4, patch_size//4)),
             nn.ReLU(),
             nn.ConvTranspose2d(self.nfilters2, self.nfilters1, kernel_size=3, stride=2, padding=1, output_padding=1),
-            # nn.ConvTranspose2d(self.nfilters2, self.nfilters1, kernel_size=4, stride=2, padding=1, output_padding=0),
             nn.ReLU(),
             nn.ConvTranspose2d(self.nfilters1, ncolors, kernel_size=3, stride=2, padding=1, output_padding=1),
-            # nn.ConvTranspose2d(self.nfilters1, ncolors, kernel_size=4, stride=2, padding=1, output_padding=0),
         )
 
     def encode(self, x : Tensor):
@@ -55,8 +53,16 @@ class CVAE(nn.Module):
     def decode(self, z : Tensor):
         return self.decoder(z)
 
-def reconstruction_loss(x_true : Tensor, x_pred : Tensor, per_sample: bool=False):
-    sse = torch.sum((x_pred - x_true)**2, dim=(1,2,3))
+def reconstruction_loss(x_true : Tensor, x_pred : Tensor, ignore_empty: bool, per_sample: bool=False):
+    if ignore_empty:
+        mask = x_true[:,-1,:,:].to(torch.bool)
+    else:
+        mask = torch.ones((x_true.shape[0], x_true.shape[2], x_true.shape[3]), dtype=torch.bool)
+
+    mask = mask.unsqueeze(1).expand(-1, x_true.shape[1], -1, -1)
+    sse = torch.sum((x_pred*mask - x_true*mask)**2, dim=(1,2,3))
+    sse /= torch.sum(mask, dim=(1,2,3))
+    # sse = torch.sum((x_pred[mask] - x_true)**2, dim=(1,2,3))
     
     if per_sample:
         return sse
@@ -99,7 +105,7 @@ def train_one_epoch(model : nn.Module, train_dataset : Dataset,
         z = model.reparameterize(mean, logvar)
         predictions = model.decode(z)
 
-        rloss = reconstruction_loss(batch, predictions)
+        rloss = reconstruction_loss(batch, predictions, model.ignore_empty)
         vaeloss = kl_weight * kl_loss(mean, logvar)
         loss = vaeloss + rloss
 
@@ -136,7 +142,7 @@ def evaluate(model : nn.Module, eval_dataset : Dataset, batch_size : int=1000,
             predictions = model.decode(mean)
 
             rlosses.append(
-                reconstruction_loss(batch, predictions, per_sample=True).detach().cpu().numpy()
+                reconstruction_loss(batch, predictions, model.ignore_empty, per_sample=True).detach().cpu().numpy()
                 )
             if detailed: embeddings.append(mean.detach().cpu().numpy())
 
