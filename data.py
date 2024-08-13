@@ -70,19 +70,21 @@ def choose_patches(masks, patchsize, patchstride, extract_donor, max_frac_empty=
             [x, y]
             for x in range(0, mask.shape[0]-patchsize, patchstride)
             for y in range(0, mask.shape[1]-patchsize, patchstride)
-            if np.mean(mask[x:x+patchsize,y:y+patchsize]) > (1-max_frac_empty)
+            if np.mean(mask.values[x:x+patchsize,y:y+patchsize]) > (1-max_frac_empty)
         ]).astype('int')
 
         donor = extract_donor(sid)
         patch_meta.append(pd.DataFrame([
-                (sid, donor, x, y)
+                (sid, donor, x, y, mask.index[x], mask.columns[y])
                 for x, y in starts
             ],
-            columns=['id','donor','x','y'],
+            columns=['id','donor','x','y', 'x_microns', 'y_microns'],
         ))
     patch_meta = pd.concat(patch_meta, axis=0).reset_index(drop=True)
     patch_meta.x = patch_meta.x.astype('int')
     patch_meta.y = patch_meta.y.astype('int')
+    patch_meta.x_microns = patch_meta.x_microns.astype('float32')
+    patch_meta.y_microns = patch_meta.y_microns.astype('float32')
     return patch_meta
 
 class ConcretePatchCollection(Dataset):
@@ -120,7 +122,7 @@ class ConcretePatchCollection(Dataset):
                 return torch.stack([self.transform(p) for p in self.patches[idx]])
 
 class PatchCollection(Dataset):
-    def __init__(self, patch_meta, samples, masks, patchsize, normalize='global', transform=None, add_mask=True):
+    def __init__(self, patch_meta, samples, masks, patchsize, normalize='global', transform=None, add_mask=False):
         self.samples = samples
         self.masks = masks
         self.meta = patch_meta
@@ -137,6 +139,8 @@ class PatchCollection(Dataset):
 
         if normalize is not False:
             self.__preprocess__(normalize)
+        self.pmin = np.min([np.percentile(s, 1, axis=(0,1)) for s in self.samples.values()], axis=0)
+        self.pmax = np.max([np.percentile(s, 99, axis=(0,1)) for s in self.samples.values()], axis=0)
 
         if self.add_mask:
             for sid in self.samples.keys():
@@ -153,8 +157,8 @@ class PatchCollection(Dataset):
             print(f'means: {self.means}')
             print(f'stds: {self.stds}')
             for sid in self.samples.keys():
-                self.samples[sid] -= self.means
-                self.samples[sid] /= self.stds
+                self.samples[sid][self.masks[sid].values] -= self.means
+                self.samples[sid][self.masks[sid].values] /= self.stds
         elif style == 'persample':
             allpixels = {
                 sid: self.samples[sid][self.masks[sid]] for sid in self.samples.keys()
@@ -170,8 +174,6 @@ class PatchCollection(Dataset):
             for sid in self.samples.keys():
                 self.samples[sid] -= self.means[sid]
                 self.samples[sid] /= self.stds[sid]
-        self.pmin = np.min([np.percentile(s, 1, axis=(0,1)) for s in self.samples.values()], axis=0)
-        self.pmax = np.max([np.percentile(s, 99, axis=(0,1)) for s in self.samples.values()], axis=0)
 
     def __len__(self):
         return len(self.meta)

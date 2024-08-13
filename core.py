@@ -14,7 +14,7 @@ class CVAE(nn.Module):
 
     def __init__(self, ncolors : int, patch_size : int,
             latent_dim: int=100, nfilters1: int=256, nfilters2: int=512,
-            ignore_empty: bool=True):
+            ignore_empty: bool=False):
         super().__init__()
         self.latent_dim = latent_dim
         self.nfilters1 = nfilters1
@@ -26,8 +26,8 @@ class CVAE(nn.Module):
             nn.ReLU(),
             nn.Conv2d(self.nfilters1, self.nfilters2, kernel_size=3, stride=2, padding=1),
             nn.ReLU(),
-            nn.Flatten(),
         )
+        self.encoder_flatten = nn.Flatten()
         self.encoder_end = nn.Linear((patch_size//4)*(patch_size//4)*self.nfilters2 + ncolors, latent_dim + latent_dim)
         
         self.decoder = nn.Sequential(
@@ -40,7 +40,7 @@ class CVAE(nn.Module):
         )
 
     def encode(self, x : Tensor):
-        output = self.encoder(x)
+        output = self.encoder_flatten(self.encoder(x))
         avg_profile = x.mean(axis=(2,3))
         output = self.encoder_end(torch.cat((output, avg_profile), dim=1))
         mean, logvar = torch.split(output, self.latent_dim, dim=1)
@@ -52,6 +52,34 @@ class CVAE(nn.Module):
 
     def decode(self, z : Tensor):
         return self.decoder(z)
+
+class CVAE_resnet(CVAE):
+    def __init__(self, ncolors : int, patch_size : int,
+            latent_dim: int=100, nfilters1: int=256, nfilters2: int=512):
+        super(CVAE_resnet, self).__init__(ncolor, patch_size, latent_dim, nfilters1=nfilters1, nfilters2=nfilters2)
+
+        self.encoder = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+        self.encoder_end = nn.Linear(self.encoder.fc.in_features + ncolors, latent_dim + latent_dim)
+        self.encoder.fc = nn.Identity()
+
+        # place new first conv layer and freeze other parameters
+        new_conv1 = nn.Conv2d(self.ncolors, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        with torch.no_grad():
+            new_conv1.weight[:, ::3, :, :] = self.encoder.conv1.weight[:, [0,0,0,0], :, :]
+            new_conv1.weight[:, 1::3, :, :] = self.encoder.conv1.weight[:, [1,1,1], :, :]
+            new_conv1.weight[:, 2::3, :, :] = self.encoder.conv1.weight[:, [2,2,2], :, :]
+        self.encoder.conv1 = new_conv1
+        self.freeze_middle()
+
+    def freeze_middle(self):
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+        for param in self.encoder.conv1.parameters():
+            param.requires_grad = True
+
+    def unfreeze_middle(self):
+        for param in self.encoder.parameters():
+            param.requires_grad = True
 
 def reconstruction_loss(x_true : Tensor, x_pred : Tensor, ignore_empty: bool, per_sample: bool=False):
     if ignore_empty:
