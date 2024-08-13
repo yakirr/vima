@@ -5,7 +5,7 @@ from sklearn.preprocessing import scale
 import cv2
 import torch
 
-def plot_with_reconstruction(model, examples, show=True, channels=[0,1,2], pmin=None, pmax=None):
+def plot_with_reconstruction(model, examples, show=True, channels=[0,1,2], pmin=None, pmax=None, cmap='seismic'):
     examples = examples.permute(0,3,1,2)
     model.eval()
     with torch.no_grad():
@@ -14,18 +14,17 @@ def plot_with_reconstruction(model, examples, show=True, channels=[0,1,2], pmin=
     examples = examples.permute(0,2,3,1).cpu().numpy()
     losses = np.mean((examples - predictions)**2, axis=(1,2,3))
 
-
     fig = plt.figure(figsize=(32,len(channels)*4))
     for j, channel in enumerate(channels):
-        v = max(abs(pmin[channel]), abs(pmax[channel]))
+        # v = max(abs(pmin[channel]), abs(pmax[channel]))
         for i, (a, b) in enumerate(zip(predictions, examples)):
             plt.subplot(2*len(channels), len(examples), len(examples)*(2*j) + i + 1)
-            plt.imshow(b[:,:,channel], vmin=-v, vmax=v, cmap='seismic')
+            plt.imshow(b[:,:,channel], vmin=pmin[channel], vmax=pmax[channel], cmap=cmap)
             plt.axis('off')
             if j == 0:
                 plt.text(20, 1, f'{losses[i]:.2f}', ha='center', va='bottom', fontsize=16)
             plt.subplot(2*len(channels), len(examples), len(examples)*(2*j+1) + i + 1)
-            plt.imshow(a[:,:,channel], vmin=-v, vmax=v, cmap='seismic')
+            plt.imshow(a[:,:,channel], vmin=pmin[channel], vmax=pmax[channel], cmap=cmap)
             plt.axis('off')
 
     plt.tight_layout()
