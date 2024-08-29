@@ -87,40 +87,6 @@ def choose_patches(masks, patchsize, patchstride, extract_donor, max_frac_empty=
     patch_meta.y_microns = patch_meta.y_microns.astype('float32')
     return patch_meta
 
-class ConcretePatchCollection(Dataset):
-    def __init__(self, patches, patch_meta, transform=None):
-        self.patches = patches
-        self.meta = patch_meta
-        self.patchsize = patches[0].shape[0]
-        self.nchannels = patches[0].shape[-1]
-
-        if transform is None:
-            self.mode = 'numpy'
-            self.transform = None
-        else:
-            self.mode = 'pytorch'
-            self.transform = transform
-
-        self.pmin = np.min(self.patches, axis=(0,1,2))
-        self.pmax = np.max(self.patches, axis=(0,1,2))
-
-    def __len__(self):
-        return len(self.meta)
-
-    def __getitem__(self, idx):
-        if type(idx) == int:
-            if self.mode == 'numpy':
-                return self.patches[idx]
-            else:
-                return self.transform(
-                    self.patches[idx]
-                )
-        else:
-            if self.mode == 'numpy':
-                return self.patches[idx]
-            else:
-                return torch.stack([self.transform(p) for p in self.patches[idx]])
-
 class PatchCollection(Dataset):
     def __init__(self, patch_meta, samples, masks, patchsize, normalize='global', transform=None, add_mask=False):
         self.samples = samples
