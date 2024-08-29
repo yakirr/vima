@@ -88,29 +88,24 @@ def choose_patches(masks, patchsize, patchstride, extract_donor, max_frac_empty=
     return patch_meta
 
 class PatchCollection(Dataset):
-    def __init__(self, patch_meta, samples, masks, patchsize, normalize='global', transform=None, add_mask=False):
+    def __init__(self, patch_meta, samples, masks, patchsize, normalize='global'):
         self.samples = samples
         self.masks = masks
         self.meta = patch_meta
         self.patchsize = patchsize
         self.nchannels = next(iter(samples.values())).shape[-1]
-        self.add_mask = add_mask
-        
-        if transform is None:
-            self.mode = 'numpy'
-            self.transform = None
-        else:
-            self.mode = 'pytorch'
-            self.transform = transform
 
-        if normalize is not False:
-            self.__preprocess__(normalize)
+        self.dim_order = 'pytorch'
+        self.augment()
+
+        self.__preprocess__(normalize)
         self.pmin = np.min([np.percentile(s, 1, axis=(0,1)) for s in self.samples.values()], axis=0)
         self.pmax = np.max([np.percentile(s, 99, axis=(0,1)) for s in self.samples.values()], axis=0)
 
-        if self.add_mask:
-            for sid in self.samples.keys():
-                self.samples[sid] = np.concatenate([self.samples[sid], np.expand_dims(self.masks[sid], axis=-1)], axis=-1)
+    def augment(self):
+        self.transform = random_transform
+    def no_augment(self):
+        self.transform = random_transform[0]
 
     def __preprocess__(self, style):
         if style == 'global':
@@ -120,6 +115,7 @@ class PatchCollection(Dataset):
             self.means = allpixels.mean(axis=0, dtype='float64')
             self.stds = allpixels.std(axis=0, dtype='float64')
             del allpixels
+
             print(f'means: {self.means}')
             print(f'stds: {self.stds}')
             for sid in self.samples.keys():
@@ -135,6 +131,8 @@ class PatchCollection(Dataset):
             self.stds = {
                 sid: allpixels[sid].std(axis=0, dtype='float64') for sid in self.samples.keys()
             }
+            del allpixels
+
             print(f'means: {self.means}')
             print(f'stds: {self.stds}')
             for sid in self.samples.keys():
@@ -149,7 +147,7 @@ class PatchCollection(Dataset):
 
         if type(idx) == int:
             patch = self.samples[toget.id][toget.x:toget.x+self.patchsize,toget.y:toget.y+self.patchsize]
-            if self.mode == 'numpy':
+            if self.dim_order == 'numpy':
                 return patch
             else:
                 return self.transform(patch)
@@ -157,7 +155,7 @@ class PatchCollection(Dataset):
             patches = np.array([
                 self.samples[s][x:x+self.patchsize,y:y+self.patchsize]
                 for s, x, y in toget[['id','x','y']].values])
-            if self.mode == 'numpy':
+            if self.dim_order == 'numpy':
                 return patches
             else:
                 return torch.stack([self.transform(p) for p in patches])
