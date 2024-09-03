@@ -6,7 +6,7 @@ import pandas as pd
 import random
 import torch
 
-class DiscreteRotation:
+class RandomDiscreteRotation:
     def __init__(self, angles):
         self.angles = angles
     def __call__(self, x):
@@ -19,45 +19,45 @@ class ToTensor:
 
 random_transform = transforms.Compose([
     ToTensor(),
-    DiscreteRotation(angles=[0,90,180,270]),
+    RandomDiscreteRotation(angles=[0,90,180,270]),
     transforms.RandomHorizontalFlip()
 ])
 
 all_transforms = [
     transforms.Compose([
         ToTensor(),
-        DiscreteRotation(angles=[0]),
+        RandomDiscreteRotation(angles=[0]),
     ]),
     transforms.Compose([
         ToTensor(),
-        DiscreteRotation(angles=[90]),
+        RandomDiscreteRotation(angles=[90]),
     ]),
     transforms.Compose([
         ToTensor(),
-        DiscreteRotation(angles=[180]),
+        RandomDiscreteRotation(angles=[180]),
     ]),
     transforms.Compose([
         ToTensor(),
-        DiscreteRotation(angles=[270]),
+        RandomDiscreteRotation(angles=[270]),
     ]),
     transforms.Compose([
         ToTensor(),
-        DiscreteRotation(angles=[0]),
+        RandomDiscreteRotation(angles=[0]),
         transforms.RandomHorizontalFlip(p=1),
     ]),
     transforms.Compose([
         ToTensor(),
-        DiscreteRotation(angles=[90]),
+        RandomDiscreteRotation(angles=[90]),
         transforms.RandomHorizontalFlip(p=1),
     ]),
     transforms.Compose([
         ToTensor(),
-        DiscreteRotation(angles=[180]),
+        RandomDiscreteRotation(angles=[180]),
         transforms.RandomHorizontalFlip(p=1),
     ]),
     transforms.Compose([
         ToTensor(),
-        DiscreteRotation(angles=[270]),
+        RandomDiscreteRotation(angles=[270]),
         transforms.RandomHorizontalFlip(p=1),
     ]),
 ]
@@ -96,16 +96,19 @@ class PatchCollection(Dataset):
         self.nchannels = next(iter(samples.values())).shape[-1]
 
         self.dim_order = 'pytorch'
-        self.augment()
+        self.augmentation_on()
 
         self.__preprocess__(normalize)
         self.pmin = np.min([np.percentile(s, 1, axis=(0,1)) for s in self.samples.values()], axis=0)
         self.pmax = np.max([np.percentile(s, 99, axis=(0,1)) for s in self.samples.values()], axis=0)
 
-    def augment(self):
+    def augmentation_on(self):
+        if self.dim_order != 'pytorch':
+            print('Data augmentation only available in pytorch mode. Will leave augmentation off')
+            return
         self.transform = random_transform
-    def no_augment(self):
-        self.transform = random_transform[0]
+    def augmentation_off(self):
+        self.transform = all_transforms[0]
 
     def __preprocess__(self, style):
         if style == 'global':
