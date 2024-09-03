@@ -1,6 +1,6 @@
 import numpy as numpy
 import pandas as pd
-import time
+import numpy as np
 
 def transcriptlist_to_pixellist(transcriptlist, x_colname='global_x', y_colname='global_y', gene_colname='gene', pixel_size=10):
     # adds dummy rows such that there is at least one entry for every possible x- and y- value
@@ -12,41 +12,40 @@ def transcriptlist_to_pixellist(transcriptlist, x_colname='global_x', y_colname=
         delta = int(min(vals[1:] - vals[:-1]))
         full_range = list(np.arange(min_col, max_col + 1, delta))
         locs_toadd = np.setdiff1d(full_range, vals)
-        if verbose: print(locs_toadd)
+        if verbose: print(f'\tadding {colname}={locs_toadd}')
         toadd = pl.iloc[:len(locs_toadd)].copy()
         toadd[colname] = locs_toadd
         toadd[genes] = fill
         return pd.concat([pl, toadd], axis=0, ignore_index=True)
 
-    print('Number of transcripts:', len(transcriptlist))
-    transcriptlist = transcriptlist[[x_colname, y_colname, gene_colname]]
-    data['pixel_x'] = (data[x_colname] / pixel_size).astype(int) * pixel_size
-    data['pixel_y'] = (data[y_colname] / pixel_size).astype(int) * pixel_size
+    transcriptlist = transcriptlist[[x_colname, y_colname, gene_colname]].copy()
+    transcriptlist['pixel_x'] = (transcriptlist[x_colname] / pixel_size).astype(int) * pixel_size
+    transcriptlist['pixel_y'] = (transcriptlist[y_colname] / pixel_size).astype(int) * pixel_size
 
-    pixels = data.groupby(['pixel_x', 'pixel_y'])[gene_colname].value_counts().unstack(fill_value=0)
+    pixels = transcriptlist.groupby(['pixel_x', 'pixel_y'])[gene_colname].value_counts().unstack(fill_value=0)
     pixels.reset_index(inplace=True)
     pl = pixels.rename_axis(None, axis=1)
     genes = pl.columns[2:]
 
     return complete(complete(pl, 'pixel_x', genes), 'pixel_y', genes)
 
-def pixellist_to_matrix(pl, markers):
-    sample = pd.pivot_table(pl, values=markers, index='pixel_y', columns='pixel_x').fillna(0)
-    sample.columns.names = ['markers', 'pixel_x']
-    print('sample shape:', sample.shape, 'minrow', row_coords.min(), 'mincol', col_coords.min())
-    return sample
+def pixellist_to_pixelmatrix(pl, markers):
+    s = pd.pivot_table(pl, values=markers, index='pixel_y', columns='pixel_x').fillna(0)
+    s.columns.names = ['markers', 'pixel_x']
+    print('sample shape:', s.shape)
+    return s
 
 # mode can be either 'ntranscripts' or 'adaptive'
-def get_foreground_st(sample, min_ntranscripts=10, plot=True):
+def get_foreground_st(s, min_ntranscripts=10, plot=True):
     # make mask
-    totals = sample.sum(levels='markers')
+    totals = s.sum(levels='markers')
     mask = totals > min_ntranscripts
     print('npixels:', mask.values.sum())
     return mask
 
-def get_pixels(sample, mask):
-    markers = sample.get_level_values('markers')
-    return pd.DataFrame(sample[mask.values], columns=markers)
+def get_pixels(s, mask):
+    markers = s.get_level_values('markers').unique()
+    return pd.DataFrame(s[mask.values], columns=markers)
 
 #######
     # # plot
