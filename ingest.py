@@ -30,7 +30,7 @@ def transcriptlist_to_pixellist(transcriptlist, x_colname='global_x', y_colname=
 
     return complete(complete(pl, 'pixel_x', genes), 'pixel_y', genes)
 
-def df_to_xarray32(df, name):
+def df_to_xarray32(df):
     markers = df.columns.get_level_values('markers').unique()
     return xr.DataArray(
             df.values.reshape((len(df), len(markers), -1)).transpose(0,2,1),
