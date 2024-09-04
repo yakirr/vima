@@ -1,6 +1,7 @@
 import numpy as numpy
 import pandas as pd
 import numpy as np
+import xarray as xr
 
 def transcriptlist_to_pixellist(transcriptlist, x_colname='global_x', y_colname='global_y', gene_colname='gene', pixel_size=10):
     # adds dummy rows such that there is at least one entry for every possible x- and y- value
@@ -29,18 +30,30 @@ def transcriptlist_to_pixellist(transcriptlist, x_colname='global_x', y_colname=
 
     return complete(complete(pl, 'pixel_x', genes), 'pixel_y', genes)
 
+def df_to_xarray32(df, name):
+    markers = df.columns.get_level_values('markers').unique()
+    return xr.DataArray(
+            df.values.reshape((len(df), len(markers), -1)).transpose(0,2,1),
+            coords={'x': df.columns.get_level_values('pixel_x').unique().values, 'y': df.index.values, 'marker': markers.values},
+            dims=['y', 'x', 'marker']
+        ).astype(np.float32)
+
 def pixellist_to_pixelmatrix(pl, markers):
+    # pivot in pandas
     s = pd.pivot_table(pl, values=markers, index='pixel_y', columns='pixel_x').fillna(0)
     s.columns.names = ['markers', 'pixel_x']
+
+    # convert to xarray
+    s = df_to_xarray32(s)
     print('sample shape:', s.shape)
+
     return s
 
 # mode can be either 'ntranscripts' or 'adaptive'
 def get_foreground_st(s, min_ntranscripts=10, plot=True):
-    # make mask
-    totals = s.sum(levels='markers')
+    totals = s.sum(dim='marker')
     mask = totals > min_ntranscripts
-    print('npixels:', mask.values.sum())
+    print(f'{mask.values.sum()} of {mask.shape[0]*mask.shape[1]} ({100*mask.values.sum()/(mask.shape[0]*mask.shape[1]):.0f}%) pixels are non-empty')
     return mask
 
 def get_pixels(s, mask):
