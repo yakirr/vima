@@ -17,7 +17,6 @@ def plot_with_reconstruction(model, examples, show=True, channels=[0,1,2], pmin=
 
     fig = plt.figure(figsize=(32,len(channels)*4))
     for j, channel in enumerate(channels):
-        # v = max(abs(pmin[channel]), abs(pmax[channel]))
         for i, (a, b) in enumerate(zip(predictions, examples)):
             plt.subplot(2*len(channels), len(examples), len(examples)*(2*j) + i + 1)
             plt.imshow(b[:,:,channel], vmin=pmin[channel], vmax=pmax[channel], cmap=cmap)
@@ -147,12 +146,3 @@ def plot_patches_fourcolors(examples, nx=5, ny=5,
 
     plot_patches_overlaychannels(examples, colormaps, nx=nx, ny=ny, show=show)
 
-def get_boundary(mask, color, thickness=10):
-    result = np.zeros((mask.shape[0], mask.shape[1], 4)).astype('float32')
-    if np.max(mask) == 0:
-        return result
-    mask = (mask / np.max(mask) * 255).astype('uint8')
-    ret, binary = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-    contours, hierarchy = cv2.findContours(binary.astype('uint8'), cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
-    cv2.drawContours(result, contours, -1, color, thickness)
-    return result

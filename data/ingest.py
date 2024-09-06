@@ -6,9 +6,10 @@ import scanpy as sc
 import xarray as xr
 import cv2 as cv
 import seaborn as sns
-from tqdm import tqdm as pb
 import matplotlib.pyplot as plt
 import gc, os, subprocess
+from tqdm import tqdm
+pb = lambda x: tqdm(x, ncols=100)
 
 compression = {'zlib': True, 'complevel': 2} # settings for writing xarrays
 
