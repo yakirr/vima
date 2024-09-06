@@ -4,22 +4,22 @@ from torch import nn, Tensor
 from torch.utils.data import Dataset, DataLoader
 from torch.optim.lr_scheduler import LRScheduler
 import torch.nn.functional as F
-import time
+import random, time, os
 import pandas as pd
-import os
 from tempfile import TemporaryDirectory
+import matplotlib.pyplot as plt
+from IPython import display
+from . import vis as tv
 
 class CVAE(nn.Module):
     """Convolutional variational autoencoder."""
 
     def __init__(self, ncolors : int, patch_size : int,
-            latent_dim: int=100, nfilters1: int=256, nfilters2: int=512,
-            ignore_empty: bool=False):
+            latent_dim: int=100, nfilters1: int=256, nfilters2: int=512):
         super().__init__()
         self.latent_dim = latent_dim
         self.nfilters1 = nfilters1
         self.nfilters2 = nfilters2
-        self.ignore_empty = ignore_empty
         
         self.encoder = nn.Sequential(
             nn.Conv2d(ncolors, self.nfilters1, kernel_size=3, stride=2, padding=1),
@@ -53,44 +53,9 @@ class CVAE(nn.Module):
     def decode(self, z : Tensor):
         return self.decoder(z)
 
-class CVAE_resnet(CVAE):
-    def __init__(self, ncolors : int, patch_size : int,
-            latent_dim: int=100, nfilters1: int=256, nfilters2: int=512):
-        super(CVAE_resnet, self).__init__(ncolor, patch_size, latent_dim, nfilters1=nfilters1, nfilters2=nfilters2)
-
-        self.encoder = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
-        self.encoder_end = nn.Linear(self.encoder.fc.in_features + ncolors, latent_dim + latent_dim)
-        self.encoder.fc = nn.Identity()
-
-        # place new first conv layer and freeze other parameters
-        new_conv1 = nn.Conv2d(self.ncolors, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        with torch.no_grad():
-            new_conv1.weight[:, ::3, :, :] = self.encoder.conv1.weight[:, [0,0,0,0], :, :]
-            new_conv1.weight[:, 1::3, :, :] = self.encoder.conv1.weight[:, [1,1,1], :, :]
-            new_conv1.weight[:, 2::3, :, :] = self.encoder.conv1.weight[:, [2,2,2], :, :]
-        self.encoder.conv1 = new_conv1
-        self.freeze_middle()
-
-    def freeze_middle(self):
-        for param in self.encoder.parameters():
-            param.requires_grad = False
-        for param in self.encoder.conv1.parameters():
-            param.requires_grad = True
-
-    def unfreeze_middle(self):
-        for param in self.encoder.parameters():
-            param.requires_grad = True
-
-def reconstruction_loss(x_true : Tensor, x_pred : Tensor, ignore_empty: bool, per_sample: bool=False):
-    if ignore_empty:
-        mask = x_true[:,-1,:,:].to(torch.bool)
-    else:
-        mask = torch.ones((x_true.shape[0], x_true.shape[2], x_true.shape[3]), dtype=torch.bool)
-
-    mask = mask.unsqueeze(1).expand(-1, x_true.shape[1], -1, -1)
-    sse = torch.sum((x_pred*mask - x_true*mask)**2, dim=(1,2,3))
-    sse /= torch.sum(mask, dim=(1,2,3))
-    # sse = torch.sum((x_pred[mask] - x_true)**2, dim=(1,2,3))
+def reconstruction_loss(x_true : Tensor, x_pred : Tensor, per_sample: bool=False):
+    sse = torch.sum((x_pred - x_true)**2, dim=(1,2,3))
+    sse /= (x_true.shape[1]*x_true.shape[2]*x_true.shape[3])
     
     if per_sample:
         return sse
@@ -133,7 +98,7 @@ def train_one_epoch(model : nn.Module, train_dataset : Dataset,
         z = model.reparameterize(mean, logvar)
         predictions = model.decode(z)
 
-        rloss = reconstruction_loss(batch, predictions, model.ignore_empty)
+        rloss = reconstruction_loss(batch, predictions)
         vaeloss = kl_weight * kl_loss(mean, logvar)
         loss = vaeloss + rloss
 
@@ -170,7 +135,7 @@ def evaluate(model : nn.Module, eval_dataset : Dataset, batch_size : int=1000,
             predictions = model.decode(mean)
 
             rlosses.append(
-                reconstruction_loss(batch, predictions, model.ignore_empty, per_sample=True).detach().cpu().numpy()
+                reconstruction_loss(batch, predictions, per_sample=True).detach().cpu().numpy()
                 )
             if detailed: embeddings.append(mean.detach().cpu().numpy())
 
@@ -179,14 +144,32 @@ def evaluate(model : nn.Module, eval_dataset : Dataset, batch_size : int=1000,
     else:
         return np.concatenate(rlosses).mean()
 
-def simple_per_epoch_logging(model, epoch, epoch_start_time, rlosses, losslog):
+def simple_per_epoch_logging(model, val_dataset, epoch, epoch_start_time, rlosses, losslog):
     print(f'end of epoch {epoch}: avg val loss = {rlosses.mean()}')
+
+def detailed_per_epoch_logging(model, val_dataset, epoch, epoch_start_time, rlosses, losslog, Pmin=None, Pmax=None):
+    display.clear_output()
+    plt.figure(figsize=(9,3))
+    plt.subplot(1,2,1)
+    plt.plot(losslog.loss, label='total loss', alpha=0.5)
+    plt.plot(losslog.rloss, label='recon. loss', alpha=0.5)
+    plt.scatter(losslog.index, losslog.val_rloss, marker='x', label='recon. loss (val)', color='green')
+    plt.scatter(np.argmin(losslog.val_rloss), losslog.val_rloss.min(), color='red')
+    plt.legend()
+    plt.ylim(0, 1.1*losslog.loss.max())
+    plt.subplot(1,2,2)
+    plt.hist(rlosses, bins=50)
+    plt.show()
+    print(f'epoch {epoch}. best validation reconstruction error = {losslog.val_rloss.min()}')
+    ix = np.argsort(rlosses)
+    examples = val_dataset[list(ix[::len(ix)//12])].permute(0,2,3,1)
+    tv.plot_with_reconstruction(model, examples, channels=range(examples.shape[-1]), pmin=Pmin, pmax=Pmax)
 
 def full_training(model : nn.Module, train_dataset : Dataset,
         val_dataset : Dataset, optimizer : torch.optim.Optimizer,
         scheduler : LRScheduler, batch_size : int=128, n_epochs : int=10,
         kl_weight : float=1, per_epoch_logging=simple_per_epoch_logging,
-        per_batch_logging=per_batch_logging):
+        per_batch_logging=per_batch_logging, per_epoch_kwargs=None):
     best_val_loss = float('inf')
     losslogs = []
 
@@ -206,8 +189,8 @@ def full_training(model : nn.Module, train_dataset : Dataset,
             losslogs.append(losslog)
             losslogs_sofar = pd.concat(losslogs, axis=0).reset_index(drop=True)
 
-            per_epoch_logging(model, epoch, epoch_start_time, rlosses,
-                losslogs_sofar)
+            per_epoch_logging(model, val_dataset, epoch, epoch_start_time, rlosses,
+                losslogs_sofar, **per_epoch_kwargs)
 
             if rlosses.mean() < best_val_loss:
                 best_val_loss = rlosses.mean()
@@ -215,3 +198,9 @@ def full_training(model : nn.Module, train_dataset : Dataset,
 
         model.load_state_dict(torch.load(best_model_params_path)) # load best model states
     return model, losslogs_sofar
+
+def train_test_split(P, breakdown=[0.8,0.2], seed=0):
+    torch.manual_seed(seed); np.random.seed(seed); random.seed(seed)
+    P.mode = 'pytorch'
+    P.augmentation_on()
+    return torch.utils.data.random_split(P, breakdown, generator=torch.Generator(device=torch.get_default_device()))
