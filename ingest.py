@@ -1,8 +1,32 @@
 import numpy as numpy
 import pandas as pd
 import numpy as np
+import anndata as ad
+import scanpy as sc
 import xarray as xr
+import cv2 as cv
+import seaborn as sns
+from tqdm import tqdm as pb
+import matplotlib.pyplot as plt
+import gc, os, subprocess
 
+compression = {'zlib': True, 'complevel': 2} # settings for writing xarrays
+
+###########################################
+# utility functions
+###########################################
+def xr_to_pixellist(s, mask):
+    return s.data[mask.data]
+
+def set_pixels(s, mask, pl):
+    s.data[mask.data] = pl
+
+def ar():
+    plt.gca().set_aspect('equal')
+
+###########################################
+# for creating raw pixel files
+###########################################
 def transcriptlist_to_pixellist(transcriptlist, x_colname='global_x', y_colname='global_y', gene_colname='gene', pixel_size=10):
     # adds dummy rows such that there is at least one entry for every possible x- and y- value
     # between the min and max values
@@ -30,14 +54,6 @@ def transcriptlist_to_pixellist(transcriptlist, x_colname='global_x', y_colname=
 
     return complete(complete(pl, 'pixel_x', genes), 'pixel_y', genes)
 
-def df_to_xarray32(df):
-    markers = df.columns.get_level_values('markers').unique()
-    return xr.DataArray(
-            df.values.reshape((len(df), len(markers), -1)).transpose(0,2,1),
-            coords={'x': df.columns.get_level_values('pixel_x').unique().values, 'y': df.index.values, 'marker': markers.values},
-            dims=['y', 'x', 'marker']
-        ).astype(np.float32)
-
 def pixellist_to_pixelmatrix(pl, markers):
     # pivot in pandas
     s = pd.pivot_table(pl, values=markers, index='pixel_y', columns='pixel_x').fillna(0)
@@ -49,24 +65,218 @@ def pixellist_to_pixelmatrix(pl, markers):
 
     return s
 
-# mode can be either 'ntranscripts' or 'adaptive'
-def get_foreground_st(s, min_ntranscripts=10, plot=True):
+def df_to_xarray32(df):
+    markers = df.columns.get_level_values('markers').unique()
+    return xr.DataArray(
+            df.values.reshape((len(df), len(markers), -1)).transpose(0,2,1),
+            coords={'x': df.columns.get_level_values('pixel_x').unique().values, 'y': df.index.values, 'marker': markers.values},
+            dims=['y', 'x', 'marker']
+        ).astype(np.float32)
+
+###########################################
+# processing raw pixel files
+###########################################
+def foreground_mask_st(s, min_ntranscripts=10, plot=True):
     totals = s.sum(dim='marker')
     mask = totals > min_ntranscripts
     print(f'{mask.values.sum()} of {mask.shape[0]*mask.shape[1]} ({100*mask.values.sum()/(mask.shape[0]*mask.shape[1]):.0f}%) pixels are non-empty')
     return mask
 
-def get_pixels(s, mask):
-    markers = s.get_level_values('markers').unique()
-    return pd.DataFrame(s[mask.values], columns=markers)
+def foreground_mask_ihc(s, min_ntranscripts=10, plot=True):
+    #todo
+    return
 
-#######
-    # # plot
-    # if plot:
-	#     sample = np.zeros((*mask.shape, len(genes)))
-	#     sample[mask.values] = pixels.values
-	#     totals = sample.sum(axis=2)
-	#     plt.imshow(totals, cmap='Reds', vmin=0)
-	#     plt.imshow(mask, cmap='gray', vmin=0, vmax=1, alpha=0.5)
-	#     plt.axis('off')
-	#     plt.show()
+def write_masks(pixelsdir, outdir, get_foreground, sids, plot=True):
+    for sid in sids:
+        print('reading', sid)
+        s = xr.open_dataarray(f'{pixelsdir}/{sid}.nc').astype(np.float32)
+        
+        # make mask and save
+        mask = get_foreground(s)
+        mask.to_netcdf(f'{outdir}/{sid}.nc', encoding={mask.name: compression}, engine="netcdf4")
+
+        if plot:
+            s.sum(dim='marker').plot(cmap='Reds', vmin=0, vmax=30); ar()
+            mask.plot(alpha=0.5, vmin=0, vmax=1, cmap='gray', add_colorbar=False)
+            plt.show()
+
+            s.where(mask, other=0).sel(marker=s.marker[::10]).plot(col='marker', col_wrap=9, vmin=0, vmax=1)
+            plt.show()
+        
+        gc.collect()
+
+def normalize_allsamples(pixelsdir, masksdir, outdir, sids):
+    print('reading all non-empty pixels')
+    pixels = np.concatenate([
+        xr_to_pixellist(
+            xr.open_dataarray(f'{pixelsdir}/{sid}.nc').astype(np.float32),
+            xr.open_dataarray(f'{masksdir}/{sid}.nc')
+            )
+        for sid in pb(sids)])
+    gc.collect()
+
+    print('computing sumstats')
+    ntranscripts = pixels.sum(axis=1, dtype=np.float64)
+    med_ntranscripts = np.median(ntranscripts)
+    pixels = np.log1p(med_ntranscripts * pixels / ntranscripts[:,None])
+    means = pixels.mean(axis=0, dtype=np.float64)
+    stds = pixels.std(axis=0, dtype=np.float64)
+    del pixels; gc.collect()
+    
+    print('normalizing and writing')
+    for sid in pb(sids):
+        s = normalize(
+            xr.open_dataarray(f'{masksdir}/{sid}.nc'),
+            xr.open_dataarray(f'{pixelsdir}/{sid}.nc').astype(np.float32),
+            med_ntranscripts, means, stds)
+        s.to_netcdf(f'{outdir}/{sid}.nc', encoding={s.name: compression}, engine="netcdf4")
+
+def normalize(mask, s, med_ntranscripts, means, stds):
+    s = s.where(mask, other=0)
+    pl = xr_to_pixellist(s, mask)
+    pl = np.log1p(med_ntranscripts * pl / pl.sum(axis=1)[:,None])
+    pl -= means
+    pl /= stds
+    set_pixels(s, mask, pl)
+    s.attrs['med_ntranscripts'] = med_ntranscripts
+    s.attrs['means'] = means
+    s.attrs['stds'] = stds
+    return s
+
+###########################################
+# dimensionality reduction and integration
+###########################################
+def metapixels_allsamples(normedpixelsdir, masksdir, sids, plot=True, ncols=8):
+    def cdf(v, ax):
+        sorted_data = np.sort(v)
+        cdf = np.arange(1, len(sorted_data) + 1) / len(sorted_data)
+        ax.plot(sorted_data, cdf)
+
+    all_metapixels = {}
+    all_npixels = {}
+
+    if plot:
+        from IPython.display import display, clear_output
+        nrows = int(np.ceil(len(sids)/ncols))
+        fig, axs = plt.subplots(nrows, ncols, figsize=(2*ncols,1.5*nrows))
+        axs = axs.reshape((nrows, -1))
+
+    for i, sid in enumerate(sids):
+        print('.', end='')
+        all_metapixels[sid], all_npixels[sid] = metapixels(
+            xr.open_dataarray(f'{normedpixelsdir}/{sid}.nc').astype(np.float32),
+            xr.open_dataarray(f'{masksdir}/{sid}.nc'))
+
+        # visualize distribution of num non-empty pixels per metapixel in this sample
+        if plot:
+            ax = axs[i // ncols, i % ncols]
+            cdf(all_npixels[sid], ax)
+            ax.set_title(sid)
+            plt.tight_layout()
+            clear_output(wait=True); display(fig)
+        gc.collect()
+
+    if plot: plt.close()
+    return all_metapixels, all_npixels
+
+def metapixels(s, mask, npixels_thresh=0):
+    markers = s.marker.values
+
+    # make metapixels and compute how many non-empty pixels and transcripts are in each metapixel
+    kernel = np.ones((5,5),np.float32)
+    mp = cv.filter2D(s.data, -1, kernel)
+    npixels = cv.filter2D(mask.data.astype('float32'), -1, kernel)
+
+    # filter out metapixels with few non-empty pixels
+    metapixels_mask = npixels > npixels_thresh
+
+    # divide each metapixel by the # of non-empty pixels that contributed to it and return
+    return pd.DataFrame(data=mp[metapixels_mask] / npixels[metapixels_mask][:,None], columns=markers), npixels[metapixels_mask]
+
+# mps should be an array of dataframes containing metapixels
+def pca_metapixels(mps, k, plot=True):
+    print('merging and standardizing metapixels')
+    allmp = pd.concat(mps)
+    allmp -= allmp.values.mean(axis=0, dtype=np.float64)
+    allmp /= allmp.values.std(axis=0, dtype=np.float64)
+    allmp = ad.AnnData(X=allmp)
+    C = np.corrcoef(allmp.X[::max(1,(len(allmp)//50000))].T)
+    print(allmp.shape)
+
+    print('performing PCA')
+    sc.tl.pca(allmp, n_comps=k)
+    loadings = pd.DataFrame(data=allmp.varm['PCs'], columns=[f'PC{i}' for i in range(1,k+1)], index=allmp.var_names)
+
+    if plot:
+        plt.imshow(C, cmap='seismic', vmin=-1, vmax=1)
+        plt.show()
+        plt.figure(figsize=(30,2))
+        plt.imshow(loadings.T, cmap='seismic', vmin=-0.5, vmax=0.5)
+        plt.show()
+
+    return loadings, C, allmp
+
+def pca_pixels(normedixelsdir, masksdir, pcloadings, sids, plot=True, npixels_to_plot=50000, colorby=['sid']):
+    print('reading in pixels')
+    pls = np.concatenate([
+        xr_to_pixellist(
+            xr.open_dataarray(f'{normedixelsdir}/{sid}.nc').astype(np.float32),
+            xr.open_dataarray(f'{masksdir}/{sid}.nc'))
+        for sid in pb(sids)])
+    sid_labels = np.concatenate([
+        np.array([sid] * xr.open_dataarray(f'{masksdir}/{sid}.nc').sum().item())
+        for sid in sids
+        ])
+    print('applying dimensionality reduction')
+    allpixels_pca = pd.DataFrame(
+        pls.dot(pcloadings),
+        columns=[f'PC{i}' for i in range(1,pcloadings.shape[1]+1)]
+        )
+    allpixels_pca['sid'] = sid_labels
+    del pls; gc.collect()
+
+    if plot:
+        print('visualizing')
+        visualize_pixels(allpixels_pca, npixels_to_plot, colorby)
+
+    return allpixels_pca
+
+def harmonize(allpixels_pca, outdir, integrate=['sid']):
+    path_to_data = os.path.abspath(f'{outdir}/_allpixels_pca.feather')
+    path_to_script = os.path.dirname(__file__) + '/harmonize.R'
+    command = ['Rscript', path_to_script, path_to_data] + integrate
+    print('Please run the following command in your R environment:')
+    print(' '.join(command))
+
+def visualize_pixels(pixels, ntoplot, colorby):
+    pcs = [c for c in pixels.columns if c.startswith('PC')]
+    metavars = [c for c in pixels.columns if c not in pcs]
+    np.random.seed(0)
+    ix = np.random.choice(len(pixels), replace=False, size=ntoplot)
+    toplot = pixels.iloc[ix]
+    toplot_ad = ad.AnnData(
+        X=toplot[pcs],
+        obs=toplot[metavars])
+    sc.pp.neighbors(toplot_ad, use_rep='X')
+    sc.tl.umap(toplot_ad)
+    
+    for metavar in colorby:
+        sns.scatterplot(x='PC1', y='PC2', hue=metavar, data=toplot, palette='Set1', s=1, legend=False)
+        plt.show()
+        
+        sc.pl.umap(toplot_ad, color=metavar)
+
+def write_harmonized(masksdir, outdir, harmpixels, sids):
+    pcs = [c for c in harmpixels.columns if c.startswith('PC')]
+    hpcs = ['h'+c for c in pcs]
+    for sid in pb(sids):
+        mask = xr.open_dataarray(f'{masksdir}/{sid}.nc')
+        pl = harmpixels[harmpixels.sid == sid]
+        s_ = np.zeros((*mask.shape, len(hpcs)))
+        s_[mask.data] = pl[pcs].values
+        s = xr.DataArray(s_,
+             dims=['y', 'x', 'marker'],
+             coords={'x': mask.x, 'y': mask.y, 'marker': hpcs})
+        s.name = sid
+        s.to_netcdf(f'{outdir}/{sid}.nc', encoding={s.name: compression}, engine="netcdf4")
+        gc.collect()

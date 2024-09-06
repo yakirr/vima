@@ -4,6 +4,7 @@ from minisom import MiniSom
 from sklearn.preprocessing import scale
 import cv2
 import torch
+import xarray as xr
 
 def plot_with_reconstruction(model, examples, show=True, channels=[0,1,2], pmin=None, pmax=None, cmap='seismic'):
     examples = examples.permute(0,3,1,2)
