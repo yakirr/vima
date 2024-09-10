@@ -10,6 +10,8 @@ from tempfile import TemporaryDirectory
 import matplotlib.pyplot as plt
 from IPython import display
 from . import vis as tv
+from tqdm import tqdm
+pb = lambda x: tqdm(x, ncols=100)
 
 class CVAE(nn.Module):
     """Convolutional variational autoencoder."""
@@ -68,16 +70,18 @@ def kl_loss(mean : Tensor, logvar : Tensor):
         dim=1))
 
 def per_batch_logging(model : nn.Module, batch_num : int, rlosses : list, vaelosses : list,
-        kl_weight : float, log_interval : int, scheduler : LRScheduler):
+        kl_weight : float, log_interval : int, scheduler : LRScheduler, epoch_start_time : int):
     lr = scheduler.get_last_lr()[0]
     cur_rloss = np.mean(rlosses[-log_interval:])
     cur_vaeloss = np.mean(vaelosses[-log_interval:])
+    time_per_batch = (time.time() - epoch_start_time) / batch_num
 
     print(f'batch {batch_num:5d} | '
             f'lr {lr:.2g} | '
             f'r-loss {cur_rloss:.2f} | '
             f'vae-loss {cur_vaeloss:.2f} | '
-            f'kl-weight {kl_weight}')
+            f'kl-weight {kl_weight} | '
+            f'time {time_per_batch:.2f} sec')
 
 def train_one_epoch(model : nn.Module, train_dataset : Dataset,
         optimizer : torch.optim.Optimizer, scheduler : LRScheduler,
@@ -91,6 +95,7 @@ def train_one_epoch(model : nn.Module, train_dataset : Dataset,
         generator=torch.Generator(device=torch.get_default_device()))
     print(f'#batches: {len(train_loader)}')
 
+    epoch_start_time = time.time()
     losses = []; vaelosses = []; rlosses = []
     for n, batch in enumerate(train_loader):
         # Forward pass
@@ -115,12 +120,16 @@ def train_one_epoch(model : nn.Module, train_dataset : Dataset,
 
         # Log
         if n % log_interval == 0 and n > 0:
-            per_batch_logging(model, n, rlosses, vaelosses, kl_weight, log_interval, scheduler)
+            per_batch_logging(model, n, rlosses, vaelosses, kl_weight,
+                log_interval, scheduler, epoch_start_time)
 
     return pd.DataFrame({'loss':losses, 'rloss':rlosses, 'vaeloss':vaelosses, 'kl_weight':kl_weight})
 
 def evaluate(model : nn.Module, eval_dataset : Dataset, batch_size : int=1000,
-        detailed : bool=False):
+        detailed : bool=False, subset=None):
+    if subset is not None:
+        eval_dataset = torch.utils.data.Subset(eval_dataset, subset)
+
     model.eval()
     eval_loader = DataLoader(
         dataset=eval_dataset,
@@ -129,8 +138,7 @@ def evaluate(model : nn.Module, eval_dataset : Dataset, batch_size : int=1000,
 
     rlosses = []; embeddings = []
     with torch.no_grad():
-        for n, batch in enumerate(eval_loader):
-            print('.', end='')
+        for batch in pb(eval_loader):
             mean, _ = model.encode(batch)
             predictions = model.decode(mean)
 
@@ -161,6 +169,7 @@ def detailed_per_epoch_logging(model, val_dataset, epoch, epoch_start_time, rlos
     plt.hist(rlosses, bins=50)
     plt.show()
     print(f'epoch {epoch}. best validation reconstruction error = {losslog.val_rloss.min()}')
+    print(f'\ttotal time: {time.time() - epoch_start_time}')
     ix = np.argsort(rlosses)
     examples = val_dataset[list(ix[::len(ix)//12])].permute(0,2,3,1)
     tv.plot_with_reconstruction(model, examples, channels=range(examples.shape[-1]), pmin=Pmin, pmax=Pmax)
@@ -181,7 +190,7 @@ def full_training(model : nn.Module, train_dataset : Dataset,
             losslog = train_one_epoch(
                 model, train_dataset, optimizer, scheduler, batch_size, kl_weight=kl_weight,
                 per_batch_logging=per_batch_logging)
-            rlosses, _ = evaluate(model, val_dataset, detailed=True)
+            rlosses, _ = evaluate(model, val_dataset, detailed=True, subset=range(0, len(val_dataset), max(1, len(val_dataset)//2000)))
             scheduler.step()
 
             losslog['val_rloss'] = np.NaN
