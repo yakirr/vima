@@ -74,6 +74,9 @@ def df_to_xarray32(df):
             dims=['y', 'x', 'marker']
         ).astype(np.float32)
 
+def downsample(s, factor, aggregate=np.mean):
+    return
+
 ###########################################
 # processing raw pixel files
 ###########################################

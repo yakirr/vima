@@ -51,6 +51,7 @@ class PatchCollection(Dataset):
         print('in pytorch mode')
     def numpy_mode(self):
         self.dim_order = 'numpy'
+        self.augmentation_off()
         print('in numpy mode')
 
     def __preprocess__(self, standardize):
