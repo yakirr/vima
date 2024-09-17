@@ -12,7 +12,7 @@ def anndata(patchmeta, Z, samplemeta, var_names=None, use_rep='X', n_comps=10, s
 	d.obs = patchmeta
 
 	if use_rep == 'X_pca':
-		sc.tl.pca(d, n_comps=n_comps)
+		sc.tl.pca(d, n_comps=min(n_comps, Z.shape[1]-1))
 
 	print('running UMAP')
 	sc.pp.neighbors(d, use_rep=use_rep)
@@ -34,4 +34,4 @@ def latentrep(P, model, samplemeta, **kwargs):
 
 	return anndata(P.meta, Z, samplemeta,
 		var_names=[f'L{i}' for i in range(1, Z.shape[1]+1)],
-		kwargs)
+		**kwargs)
