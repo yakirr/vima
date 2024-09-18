@@ -178,7 +178,7 @@ def full_training(model : nn.Module, train_dataset : Dataset,
         val_dataset : Dataset, optimizer : torch.optim.Optimizer,
         scheduler : LRScheduler, batch_size : int=128, n_epochs : int=10,
         kl_weight : float=1, per_epoch_logging=simple_per_epoch_logging,
-        per_batch_logging=per_batch_logging, per_epoch_kwargs=None):
+        per_batch_logging=per_batch_logging, per_epoch_kwargs={}):
     best_val_loss = float('inf')
     losslogs = []
 
