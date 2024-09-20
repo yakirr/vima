@@ -74,8 +74,25 @@ def df_to_xarray32(df):
             dims=['y', 'x', 'marker']
         ).astype(np.float32)
 
-def downsample(s, factor, aggregate=np.mean):
-    return
+def downsample(sample, factor, aggregate=np.mean):
+    pad_width = ((sample.shape[0] % factor, 0), (sample.shape[1] % factor, 0), (0,0))
+    sample = np.pad(sample, pad_width, mode='constant', constant_values=0)
+    
+    smaller = sample.reshape(sample.shape[0], sample.shape[1]//factor, factor, sample.shape[2])
+    smaller = aggregate(smaller, axis=2)
+    smaller = smaller.reshape(smaller.shape[0]//factor, factor, smaller.shape[1], smaller.shape[2])
+    smaller = aggregate(smaller, axis=1)
+    return smaller
+
+def hiresarray_to_downsampledxarray(sample, name, factor, pixelsize, markers):
+    sample = downsample(sample, factor)
+    sample = xr.DataArray(
+            sample,
+            coords={'x': np.arange(sample.shape[1])*factor*pixelsize, 'y': np.arange(sample.shape[0])*factor*pixelsize, 'marker': markers},
+            dims=['y', 'x', 'marker']
+        ).astype(np.float32)
+    sample.name = name
+    return sample
 
 ###########################################
 # processing raw pixel files
