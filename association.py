@@ -3,7 +3,10 @@ import scanpy as sc
 import anndata as ad
 import pandas as pd
 import multianndata as md
-from . import model as tm
+import torch
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+pb = lambda x: tqdm(x, ncols=100)
 
 def anndata(patchmeta, Z, samplemeta, var_names=None, use_rep='X', n_comps=10, sampleid='donor'):
 	d = ad.AnnData(Z)
@@ -27,10 +30,27 @@ def anndata(patchmeta, Z, samplemeta, var_names=None, use_rep='X', n_comps=10, s
 
 	return d
 
-def latentrep(P, model, samplemeta, **kwargs):
+def apply(model, P, embedding=None, batch_size=1000):
+	if embedding is None:
+		embedding = model.embedding
+
+	P.pytorch_mode()
 	P.augmentation_off()
-	rlosses, Z = tm.evaluate(model, P, detailed=True)
-	print(f'mean loss = {rlosses.mean()}')
+	model.eval()
+	eval_loader = DataLoader(
+		dataset=P,
+		batch_size=batch_size,
+		shuffle=False)
+
+	Z = []
+	with torch.no_grad():
+		for batch in pb(eval_loader):
+			Z.append(embedding(batch).detach().cpu().numpy())
+
+	return np.concatenate(Z)
+
+def latentrep(model, P, samplemeta, **kwargs):
+	apply(model, P)
 
 	return anndata(P.meta, Z, samplemeta,
 		var_names=[f'L{i}' for i in range(1, Z.shape[1]+1)],
