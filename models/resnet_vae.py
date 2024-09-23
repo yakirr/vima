@@ -33,27 +33,19 @@ class ResnetVAE(VAE):
         self.network = network
         if self.network == 'default':
             if num_layers==18:
-                # resnet 18 encoder
                 self.encoder = Encoder(BasicBlockEnc, [2, 2, 2, 2])
-                # resnet 18 decoder
                 self.decoder = Decoder(BasicBlockDec, [2, 2, 2, 2])
             elif num_layers==34:
-                # resnet 34 encoder
                 self.encoder = Encoder(BasicBlockEnc, [3, 4, 6, 3])
-                # resnet 34 decoder
                 self.decoder = Decoder(BasicBlockDec, [3, 4, 6, 3]) 
             else:
                 raise NotImplementedError("Only resnet 18 & 34 autoencoder have been implemented for images size >= 64x64.")
         elif self.network == 'light':
             if num_layers==18:
-                # resnet 18 encoder
                 self.encoder = LightEncoder(ncolors, nlatent, LightBasicBlockEnc, [2, 2, 2]) 
-                # resnet 18 decoder
                 self.decoder = LightDecoder(ncolors, nlatent, LightBasicBlockDec, [2, 2, 2]) 
             elif num_layers==20:
-                # resnet 18 encoder
                 self.encoder = LightEncoder(ncolors, nlatent, LightBasicBlockEnc, [3, 3, 3]) 
-                # resnet 18 decoder
                 self.decoder = LightDecoder(ncolors, nlatent, LightBasicBlockDec, [3, 3, 3]) 
             else:
                 raise NotImplementedError("Only resnet 18 & 20 autoencoder have been implemented for images size < 64x64.")

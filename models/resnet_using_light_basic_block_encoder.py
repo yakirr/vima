@@ -113,8 +113,6 @@ class LightEncoder(nn.Module):
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
         self.logvar = copy.deepcopy(self.layer3)
-        # self.mean = nn.Sequential(nn.Flatten(), nn.Linear(64*8*8, nlatent))
-        # self.logvar = copy.deepcopy(self.mean)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
