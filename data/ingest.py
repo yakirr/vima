@@ -4,7 +4,7 @@ import numpy as np
 import anndata as ad
 import scanpy as sc
 import xarray as xr
-import cv2 as cv
+import cv2 as cv2
 import seaborn as sns
 import matplotlib.pyplot as plt
 import gc, os, subprocess
@@ -97,15 +97,24 @@ def hiresarray_to_downsampledxarray(sample, name, factor, pixelsize, markers):
 ###########################################
 # processing raw pixel files
 ###########################################
-def foreground_mask_st(s, min_ntranscripts=10, plot=True):
+def foreground_mask_st(s, min_ntranscripts=10):
     totals = s.sum(dim='marker')
     mask = totals > min_ntranscripts
-    print(f'{mask.values.sum()} of {mask.shape[0]*mask.shape[1]} ({100*mask.values.sum()/(mask.shape[0]*mask.shape[1]):.0f}%) pixels are non-empty')
     return mask
 
-def foreground_mask_ihc(s, min_ntranscripts=10, plot=True):
-    #todo
-    return
+def foreground_mask_ihc(s, real_markers, neg_ctrls, blur_width=5):
+    # compute totals
+    totals = s.sel(marker=real_markers).sum(dim='marker') - s.sel(marker=neg_ctrls).sum(dim='marker')
+    totals -= totals.min()
+    totals /= (totals.max()/255)
+    totals = totals.astype('uint8')
+
+    # determine foreground vs background
+    blurred = cv2.GaussianBlur(totals.data,(blur_width, blur_width),0)
+    _, mask = cv2.threshold(blurred,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+    return xr.DataArray(mask.astype('bool'),
+                coords={'x': totals.x, 'y': totals.y},
+                dims=['y','x'], name=s.name)
 
 def write_masks(pixelsdir, outdir, get_foreground, sids, plot=True):
     for sid in sids:
@@ -114,6 +123,7 @@ def write_masks(pixelsdir, outdir, get_foreground, sids, plot=True):
         
         # make mask and save
         mask = get_foreground(s)
+        print(f'{mask.values.sum()} of {mask.shape[0]*mask.shape[1]} ({100*mask.values.sum()/(mask.shape[0]*mask.shape[1]):.0f}%) pixels are non-empty')
         mask.to_netcdf(f'{outdir}/{sid}.nc', encoding={mask.name: compression}, engine="netcdf4")
 
         if plot:
@@ -126,7 +136,20 @@ def write_masks(pixelsdir, outdir, get_foreground, sids, plot=True):
         
         gc.collect()
 
-def normalize_allsamples(pixelsdir, masksdir, outdir, sids):
+# todo: organize the following three functions to eliminate code redundancy
+def normalize_st(mask, s, med_ntranscripts, means, stds):
+    s = s.where(mask, other=0)
+    pl = xr_to_pixellist(s, mask)
+    pl = np.log1p(med_ntranscripts * pl / pl.sum(axis=1)[:,None])
+    pl -= means
+    pl /= stds
+    set_pixels(s, mask, pl)
+    s.attrs['med_ntranscripts'] = med_ntranscripts
+    s.attrs['means'] = means
+    s.attrs['stds'] = stds
+    return s
+
+def normalize_allsamples_st(pixelsdir, masksdir, outdir, sids):
     print('reading all non-empty pixels')
     pixels = np.concatenate([
         xr_to_pixellist(
@@ -143,26 +166,55 @@ def normalize_allsamples(pixelsdir, masksdir, outdir, sids):
     means = pixels.mean(axis=0, dtype=np.float64)
     stds = pixels.std(axis=0, dtype=np.float64)
     del pixels; gc.collect()
+
+    print('normalizing and writing')
+    for sid in pb(sids):
+        s = normalize_st(
+            xr.open_dataarray(f'{masksdir}/{sid}.nc'),
+            xr.open_dataarray(f'{pixelsdir}/{sid}.nc').astype(np.float32),
+            med_ntranscripts, means, stds)
+        s.to_netcdf(f'{outdir}/{sid}.nc', encoding={s.name: compression}, engine="netcdf4")
+
+def normalize_allsamples_custom(pixelsdir, masksdir, outdir, sids, transform):
+    def get_sumstats(pixels):
+        pixels, _ = transform(pixels)
+        means = pixels.mean(axis=0)
+        stds = pixels.std(axis=0)
+        return {'means':means, 'stds':stds}
+
+    def normalize(mask, s, means=None, stds=None):
+        pl = xr_to_pixellist(s, mask)
+        pl, newmarkers = transform(pl)
+        pl -= means
+        pl /= stds
+
+        s = xr.DataArray(np.zeros((*mask.shape, pl.shape[1])),
+            coords={'x':s.x, 'y':s.y, 'marker':newmarkers},
+            dims=['y','x','marker'], name=s.name)
+        set_pixels(s, mask, pl)
+        s.attrs['means'] = means
+        s.attrs['stds'] = stds
+        return s
+
+    print('reading all non-empty pixels')
+    pixels = np.concatenate([
+        xr_to_pixellist(
+            xr.open_dataarray(f'{pixelsdir}/{sid}.nc').astype(np.float32),
+            xr.open_dataarray(f'{masksdir}/{sid}.nc')
+            )
+        for sid in pb(sids)])
+    gc.collect()
+
+    print('computing sumstats')
+    sumstats = get_sumstats(pixels)
     
     print('normalizing and writing')
     for sid in pb(sids):
         s = normalize(
             xr.open_dataarray(f'{masksdir}/{sid}.nc'),
             xr.open_dataarray(f'{pixelsdir}/{sid}.nc').astype(np.float32),
-            med_ntranscripts, means, stds)
+            **sumstats)
         s.to_netcdf(f'{outdir}/{sid}.nc', encoding={s.name: compression}, engine="netcdf4")
-
-def normalize(mask, s, med_ntranscripts, means, stds):
-    s = s.where(mask, other=0)
-    pl = xr_to_pixellist(s, mask)
-    pl = np.log1p(med_ntranscripts * pl / pl.sum(axis=1)[:,None])
-    pl -= means
-    pl /= stds
-    set_pixels(s, mask, pl)
-    s.attrs['med_ntranscripts'] = med_ntranscripts
-    s.attrs['means'] = means
-    s.attrs['stds'] = stds
-    return s
 
 ###########################################
 # dimensionality reduction and integration
@@ -205,8 +257,8 @@ def metapixels(s, mask, npixels_thresh=0):
 
     # make metapixels and compute how many non-empty pixels and transcripts are in each metapixel
     kernel = np.ones((5,5),np.float32)
-    mp = cv.filter2D(s.data, -1, kernel)
-    npixels = cv.filter2D(mask.data.astype('float32'), -1, kernel)
+    mp = cv2.filter2D(s.data, -1, kernel)
+    npixels = cv2.filter2D(mask.data.astype('float32'), -1, kernel)
 
     # filter out metapixels with few non-empty pixels
     metapixels_mask = npixels > npixels_thresh
@@ -233,6 +285,7 @@ def pca_metapixels(mps, k, plot=True):
         plt.show()
         plt.figure(figsize=(30,2))
         plt.imshow(loadings.T, cmap='seismic', vmin=-0.5, vmax=0.5)
+        plt.xticks(range(len(loadings)), loadings.index)
         plt.show()
 
     return loadings, C, allmp

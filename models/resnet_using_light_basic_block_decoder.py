@@ -179,7 +179,8 @@ class LightDecoder(nn.Module):
 
         x = self.de_conv1(x)
         x = self.bn1(x)
-        x = self.relu(x)
+        # x = self.relu(x)
+        
         return x
 
 

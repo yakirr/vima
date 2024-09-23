@@ -14,11 +14,12 @@ def default_parser(fname):
         'sid': fname.split('_')[1]
     }
 
-def read_samples(filemask, filename_parser, stop_after=None):
-    samples = {}
-    files = glob.glob(filemask)
+def read_samples(files, filename_parser, stop_after=None):
+    if type(files) == str:
+        files = glob.glob(files)
     if stop_after is None: stop_after = len(files)
 
+    samples = {}
     for f in pb(files[:stop_after]):
         s = xr.open_dataarray(f).astype(np.float32)
         s.attrs.update(filename_parser(f))
