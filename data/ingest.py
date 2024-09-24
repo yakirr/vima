@@ -136,8 +136,15 @@ def write_masks(pixelsdir, outdir, get_foreground, sids, plot=True):
         
         gc.collect()
 
-# todo: organize the following three functions to eliminate code redundancy
-def normalize_st(mask, s, med_ntranscripts, means, stds):
+def get_sumstats_st(pixels):
+    ntranscripts = pixels.sum(axis=1, dtype=np.float64)
+    med_ntranscripts = np.median(ntranscripts)
+    pixels = np.log1p(med_ntranscripts * pixels / ntranscripts[:,None])
+    means = pixels.mean(axis=0, dtype=np.float64)
+    stds = pixels.std(axis=0, dtype=np.float64)
+    return {'means':means, 'stds':stds, 'med_ntranscripts':med_ntranscripts}
+
+def normalize_st(mask, s, med_ntranscripts=None, means=None, stds=None):
     s = s.where(mask, other=0)
     pl = xr_to_pixellist(s, mask)
     pl = np.log1p(med_ntranscripts * pl / pl.sum(axis=1)[:,None])
@@ -149,53 +156,7 @@ def normalize_st(mask, s, med_ntranscripts, means, stds):
     s.attrs['stds'] = stds
     return s
 
-def normalize_allsamples_st(pixelsdir, masksdir, outdir, sids):
-    print('reading all non-empty pixels')
-    pixels = np.concatenate([
-        xr_to_pixellist(
-            xr.open_dataarray(f'{pixelsdir}/{sid}.nc').astype(np.float32),
-            xr.open_dataarray(f'{masksdir}/{sid}.nc')
-            )
-        for sid in pb(sids)])
-    gc.collect()
-
-    print('computing sumstats')
-    ntranscripts = pixels.sum(axis=1, dtype=np.float64)
-    med_ntranscripts = np.median(ntranscripts)
-    pixels = np.log1p(med_ntranscripts * pixels / ntranscripts[:,None])
-    means = pixels.mean(axis=0, dtype=np.float64)
-    stds = pixels.std(axis=0, dtype=np.float64)
-    del pixels; gc.collect()
-
-    print('normalizing and writing')
-    for sid in pb(sids):
-        s = normalize_st(
-            xr.open_dataarray(f'{masksdir}/{sid}.nc'),
-            xr.open_dataarray(f'{pixelsdir}/{sid}.nc').astype(np.float32),
-            med_ntranscripts, means, stds)
-        s.to_netcdf(f'{outdir}/{sid}.nc', encoding={s.name: compression}, engine="netcdf4")
-
-def normalize_allsamples_custom(pixelsdir, masksdir, outdir, sids, transform):
-    def get_sumstats(pixels):
-        pixels, _ = transform(pixels)
-        means = pixels.mean(axis=0)
-        stds = pixels.std(axis=0)
-        return {'means':means, 'stds':stds}
-
-    def normalize(mask, s, means=None, stds=None):
-        pl = xr_to_pixellist(s, mask)
-        pl, newmarkers = transform(pl)
-        pl -= means
-        pl /= stds
-
-        s = xr.DataArray(np.zeros((*mask.shape, pl.shape[1])),
-            coords={'x':s.x, 'y':s.y, 'marker':newmarkers},
-            dims=['y','x','marker'], name=s.name)
-        set_pixels(s, mask, pl)
-        s.attrs['means'] = means
-        s.attrs['stds'] = stds
-        return s
-
+def normalize_allsamples(pixelsdir, masksdir, outdir, sids, get_sumstats=get_sumstats_st, normalize=normalize_st):
     print('reading all non-empty pixels')
     pixels = np.concatenate([
         xr_to_pixellist(
@@ -207,6 +168,7 @@ def normalize_allsamples_custom(pixelsdir, masksdir, outdir, sids, transform):
 
     print('computing sumstats')
     sumstats = get_sumstats(pixels)
+    del pixels; gc.collect()
     
     print('normalizing and writing')
     for sid in pb(sids):

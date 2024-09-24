@@ -25,7 +25,7 @@ def reconstruction_loss(x_true : Tensor, x_pred : Tensor, per_sample: bool=False
 def kl_loss(mean : Tensor, logvar : Tensor):
     return -0.5 * torch.mean(
         torch.sum(1 + logvar - mean.pow(2) - logvar.exp(),
-        dim=1))
+        dim=tuple(range(1, mean.dim()))))
 
 def per_batch_logging(model : nn.Module, batch_num : int, rlosses : list, vaelosses : list,
         kl_weight : float, log_interval : int, scheduler : LRScheduler, epoch_start_time : int):
