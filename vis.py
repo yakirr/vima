@@ -27,8 +27,8 @@ def plot_with_reconstruction(model, examples, show=True, channels=[0,1,2], pmin=
             plt.imshow(a[:,:,channel], vmin=pmin[channel], vmax=pmax[channel], cmap=cmap)
             plt.axis('off')
 
-    plt.tight_layout()
     if show:
+        plt.tight_layout()
         plt.show()
 
 def plot_patches_separatechannels(examples, choose=None, vmax=10, vmin=None, channels=[0,1,2], channelnames=None):

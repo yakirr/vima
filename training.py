@@ -26,6 +26,7 @@ def kl_loss(mean : Tensor, logvar : Tensor):
     return -0.5 * torch.mean(
         torch.sum(1 + logvar - mean.pow(2) - logvar.exp(),
         dim=tuple(range(1, mean.dim()))))
+        # dim=1)) 
 
 def per_batch_logging(model : nn.Module, batch_num : int, rlosses : list, vaelosses : list,
         kl_weight : float, log_interval : int, scheduler : LRScheduler, epoch_start_time : int):

@@ -80,13 +80,12 @@ def plot_sample_with_patches(s, marker, patchmeta, remove_margin=False, ax=None,
 
     inpatches = union_patches_in_sample(patchmeta, s)
     
-    if remove_margin:
-        pass
-        # indices = np.where(mypatches)
-        # x_min, x_max = np.min(indices[0]), np.max(indices[0])
-        # y_min, y_max = np.min(indices[1]), np.max(indices[1])
-        # x_min = max(x_min-200, 0); x_max = min(x_max+200, image.shape[0])
-        # y_min = max(y_min-200, 0); y_max = min(y_max+200, image.shape[1])
+    if remove_margin and inpatches.sum() > 0:
+        indices = np.where(inpatches)
+        x_min, x_max = np.min(indices[1]), np.max(indices[1])
+        y_min, y_max = np.min(indices[0]), np.max(indices[0])
+        x_min = max(x_min-200, 0); x_max = min(x_max+200, inpatches.sizes['x'])
+        y_min = max(y_min-200, 0); y_max = min(y_max+200, inpatches.sizes['y'])
     else:
         x_min, x_max = 0, inpatches.sizes['x']
         y_min, y_max = 0, inpatches.sizes['y']
