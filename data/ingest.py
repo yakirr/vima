@@ -75,9 +75,8 @@ def df_to_xarray32(df):
         ).astype(np.float32)
 
 def downsample(sample, factor, aggregate=np.mean):
-    pad_width = ((sample.shape[0] % factor, 0), (sample.shape[1] % factor, 0), (0,0))
+    pad_width = ((factor - sample.shape[0] % factor, 0), (factor - sample.shape[1] % factor, 0), (0,0))
     sample = np.pad(sample, pad_width, mode='constant', constant_values=0)
-    
     smaller = sample.reshape(sample.shape[0], sample.shape[1]//factor, factor, sample.shape[2])
     smaller = aggregate(smaller, axis=2)
     smaller = smaller.reshape(smaller.shape[0]//factor, factor, smaller.shape[1], smaller.shape[2])
