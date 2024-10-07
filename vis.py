@@ -92,7 +92,7 @@ def plot_patches_overlaychannels(examples, colormaps, nx=5, ny=5, show=True, see
     return ix
 
 # colormaps consists of tuples of the form [channel, color, scaler]
-def plot_patches_overlaychannels_som(examples, latent, colormaps, nx=5, ny=5, show=True, seed=None):
+def plot_patches_overlaychannels_som(examples, latent, colormaps, nx=5, ny=5, show=True, seed=None, scale_factor=1, spacing=None):
     if seed is not None: np.random.seed(seed)
     som = MiniSom(nx, ny, len(latent[0]),
               neighborhood_function='gaussian', sigma=1.5,
@@ -103,7 +103,8 @@ def plot_patches_overlaychannels_som(examples, latent, colormaps, nx=5, ny=5, sh
     som.train_random(latent, 1000, verbose=False)
     map = som.labels_map(latent, range(len(latent)))
     
-    fig, axs = plt.subplots(nx, ny, figsize=(nx,ny))
+    fig, axs = plt.subplots(nx, ny,
+        figsize=(scale_factor*nx,scale_factor*ny))
     for p, box in map.items():
         box = list(box)
         c = np.random.choice(box, size=1)[0]
@@ -112,7 +113,13 @@ def plot_patches_overlaychannels_som(examples, latent, colormaps, nx=5, ny=5, sh
         ax.imshow(image)
     for ax in axs.flatten():
         ax.axis('off')
-    plt.tight_layout()
+        
+    if spacing is None:
+        plt.tight_layout()
+    else:
+        spacing *= scale_factor
+        plt.subplots_adjust(left=spacing/2, right=1-spacing/2, top=1-spacing/2, bottom=spacing/2, wspace=spacing, hspace=spacing)
+    
     if show:
         plt.show()
 
