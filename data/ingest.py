@@ -7,6 +7,7 @@ import xarray as xr
 import cv2 as cv2
 import seaborn as sns
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import gc, os, subprocess
 from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
@@ -129,8 +130,10 @@ def write_masks(pixelsdir, outdir, get_foreground, sids, plot=True):
             s.sum(dim='marker').plot(cmap='Reds', vmin=0, vmax=30); ar()
             mask.plot(alpha=0.5, vmin=0, vmax=1, cmap='gray', add_colorbar=False)
             plt.show()
-
-            s.where(mask, other=0).sel(marker=s.marker[::10]).plot(col='marker', col_wrap=9, vmin=0, vmax=1)
+            
+            subset = s.where(mask, other=0).sel(marker=s.marker[::10])
+            norm = mcolors.Normalize(vmin = subset.min(), vmax = 0.95 * subset.max())
+            subset.plot(col='marker', col_wrap=4, norm = norm)
             plt.show()
         
         gc.collect()
