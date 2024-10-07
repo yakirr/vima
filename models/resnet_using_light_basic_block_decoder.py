@@ -1,6 +1,7 @@
 from typing import Callable, List, Optional, Type
 
 import torch.nn as nn
+import torch
 from torch import Tensor
 
 
@@ -82,6 +83,7 @@ class LightDecoder(nn.Module):
     def __init__(
         self,
         ncolors: int,
+        nsids: int,
         nlatent: int,
         block: Type[LightBasicBlockDec],
         layers: List[int],
@@ -95,7 +97,11 @@ class LightDecoder(nn.Module):
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
 
-        self.inplanes = 16 # It should be the shape of the output image CHANEL from the previous layer (layer1).
+        sid_embedding_dim = 4
+        self.sid_embedding = nn.Embedding(nsids, sid_embedding_dim)
+        # self.sid_embedding = lambda s: torch.nn.functional.one_hot(s, num_classes=nsids)
+
+        self.inplanes = 16+sid_embedding_dim # It should be the shape of the output image CHANEL from the previous layer (layer1).
         self.dilation = 1
         self.groups = groups
         self.base_width = width_per_group
@@ -103,10 +109,9 @@ class LightDecoder(nn.Module):
         self.bn1 = norm_layer(ncolors)
         self.relu = nn.ReLU(inplace=True)
 
-        # self.reshape = nn.Sequential(nn.Linear(nlatent, 64*8*8), nn.Unflatten(1, (64, 8, 8)))
-        self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
-        self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
-        self.layer1 = self._make_layer(block, 16, layers[0], stride=1 ,output_padding = 0, last_block_dim=16) # NOTE: last_block_dim must be equal with the initila self.inplanes
+        self.layer3 = self._make_layer(block, 64+sid_embedding_dim, layers[2], stride=2, last_block_dim=32)
+        self.layer2 = self._make_layer(block, 32+sid_embedding_dim, layers[1], stride=2, last_block_dim=16)
+        self.layer1 = self._make_layer(block, 16+sid_embedding_dim, layers[0], stride=1 ,output_padding = 0, last_block_dim=16) # NOTE: last_block_dim must be equal with the initila self.inplanes
 
 
         for m in self.modules():
@@ -165,24 +170,41 @@ class LightDecoder(nn.Module):
                 # info from neighbor pixels are included to the output pixel.
                 norm_layer(last_block_dim),
             )
+        elif planes != last_block_dim:
+            upsample = nn.Sequential(
+                conv3x3Transposed(self.inplanes, last_block_dim, stride),
+                norm_layer(last_block_dim),
+            )
 
         layers.append( block(
                 last_block_dim, planes, stride, output_padding, upsample, self.groups, self.base_width, previous_dilation, norm_layer
             ))
         return nn.Sequential(*layers)
 
-    def _forward_impl(self, x: Tensor) -> Tensor:
-        # x = self.reshape(x)
+    def _forward_impl(self, xs) -> Tensor:
+        x, sid_nums = xs
+
+        se = self.sid_embedding(sid_nums)
+
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
         x = self.layer3(x)
+
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
         x = self.layer2(x)
+
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
         x = self.layer1(x)
 
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
         x = self.de_conv1(x)
         x = self.bn1(x)
-        # x = self.relu(x)
         
         return x
 
 
-    def forward(self, x: Tensor) -> Tensor:
-        return self._forward_impl(x)
+    def forward(self, xs) -> Tensor:
+        return self._forward_impl(xs)

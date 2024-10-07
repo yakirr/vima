@@ -13,7 +13,8 @@ from . import vis as tv
 from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 
-def reconstruction_loss(x_true : Tensor, x_pred : Tensor, per_sample: bool=False):
+def reconstruction_loss(x_true, x_pred : Tensor, per_sample: bool=False):
+    x_true, _ = x_true
     sse = torch.sum((x_pred - x_true)**2, dim=(1,2,3))
     sse /= (x_true.shape[1]*x_true.shape[2]*x_true.shape[3])
     
@@ -127,8 +128,9 @@ def detailed_per_epoch_logging(model, val_dataset, epoch, epoch_start_time, rlos
     print(f'epoch {epoch}. best validation reconstruction error = {losslog.val_rloss.min()}')
     print(f'\ttotal time: {time.time() - epoch_start_time}')
     ix = np.argsort(rlosses)
-    examples = val_dataset[list(ix[::len(ix)//12])].permute(0,2,3,1)
-    tv.plot_with_reconstruction(model, examples, channels=range(examples.shape[-1]), pmin=Pmin, pmax=Pmax)
+    examples = val_dataset[list(ix[::len(ix)//12])]
+    examples = (examples[0].permute(0,2,3,1), examples[1])
+    tv.plot_with_reconstruction(model, examples, channels=range(examples[0].shape[-1]), pmin=Pmin, pmax=Pmax)
 
 def full_training(model : nn.Module, train_dataset : Dataset,
         val_dataset : Dataset, optimizer : torch.optim.Optimizer,
@@ -144,7 +146,7 @@ def full_training(model : nn.Module, train_dataset : Dataset,
         for epoch in range(1, n_epochs + 1):
             epoch_start_time = time.time()
             losslog = train_one_epoch(
-                model, train_dataset, optimizer, scheduler, batch_size, kl_weight=kl_weight,
+                model, train_dataset, optimizer, scheduler, batch_size, kl_weight=kl_weight * min(epoch / 5, 1),
                 per_batch_logging=per_batch_logging)
             rlosses, _ = evaluate(model, val_dataset, detailed=True, subset=range(0, len(val_dataset), max(1, len(val_dataset)//2000)))
             scheduler.step()
@@ -159,9 +161,9 @@ def full_training(model : nn.Module, train_dataset : Dataset,
 
             if rlosses.mean() < best_val_loss:
                 best_val_loss = rlosses.mean()
-                torch.save(model.state_dict(), best_model_params_path)
+                # torch.save(model.state_dict(), best_model_params_path)
 
-        model.load_state_dict(torch.load(best_model_params_path)) # load best model states
+        # model.load_state_dict(torch.load(best_model_params_path)) # load best model states
     return model, losslogs_sofar
 
 def train_test_split(P, breakdown=[0.8,0.2], seed=0):
