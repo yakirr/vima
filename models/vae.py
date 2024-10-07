@@ -12,10 +12,11 @@ class VAE(nn.Module, ABC):
         eps = torch.randn_like(mean)
         return eps * torch.exp(logvar * .5) + mean
 
-    def forward(self, x, sample_from_latent=True):
-        mean, logvar = self.encode(x)
+    def forward(self, xs, sample_from_latent=True):
+        _, sid_nums = xs
+        mean, logvar = self.encode(xs)
         z = self.reparameterize(mean, logvar) if sample_from_latent else mean
-        x = self.decode(z)
+        x = self.decode((z, sid_nums))
 
         return x, mean, logvar
 
@@ -34,4 +35,4 @@ class VAE(nn.Module, ABC):
     # returns a flattened vector per observation without the variational jitter added
     # during training
     def embedding(self, x):
-        return self.encode(x)[0].reshape((len(x), -1))
+        return self.encode(x)[0].reshape((len(x[0]), -1))

@@ -7,12 +7,12 @@ import torch
 import xarray as xr
 
 def plot_with_reconstruction(model, examples, show=True, channels=[0,1,2], pmin=None, pmax=None, cmap='seismic'):
-    examples = examples.permute(0,3,1,2)
+    examples = (examples[0].permute(0,3,1,2), examples[1])
     model.eval()
     with torch.no_grad():
-        means, _ = model.encode(examples)
-        predictions = model.decode(means).permute(0,2,3,1).cpu().numpy()
-    examples = examples.permute(0,2,3,1).cpu().numpy()
+        predictions, means, _ = model.forward(examples)
+    examples = examples[0].permute(0,2,3,1).cpu().numpy()
+    predictions = predictions.permute(0,2,3,1).cpu().numpy()
     losses = np.mean((examples - predictions)**2, axis=(1,2,3))
 
     fig = plt.figure(figsize=(32,len(channels)*4))

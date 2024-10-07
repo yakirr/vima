@@ -2,6 +2,7 @@ from typing import Callable, List, Optional, Type
 import copy
 
 import torch.nn as nn
+import torch
 from torch import Tensor
 
 """From https://pytorch.org/vision/main/_modules/torchvision/models/resnet.html#resnet18"""
@@ -79,6 +80,7 @@ class LightEncoder(nn.Module):
     def __init__(
         self,
         ncolors: int,
+        nsids: int,
         nlatent: int,
         block: Type[LightBasicBlockEnc],
         layers: List[int],
@@ -104,13 +106,22 @@ class LightEncoder(nn.Module):
                 "replace_stride_with_dilation should be None "
                 f"or a 3-element tuple, got {replace_stride_with_dilation}"
             )
+
+        sid_embedding_dim = 4
+        # self.sid_embedding = lambda s: torch.nn.functional.one_hot(s, num_classes=nsids)
+        self.sid_embedding = nn.Embedding(nsids, sid_embedding_dim)
+
         self.groups = groups
         self.base_width = width_per_group
-        self.conv1 = conv3x3(ncolors, self.inplanes)
+        self.conv1 = conv3x3(ncolors + sid_embedding_dim, self.inplanes)
         self.bn1 = norm_layer(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
+        
+        self.inplanes += sid_embedding_dim
         self.layer1 = self._make_layer(block, 16, layers[0])
+        self.inplanes += sid_embedding_dim
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
+        self.inplanes += sid_embedding_dim
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
         self.logvar = copy.deepcopy(self.layer3)
 
@@ -172,17 +183,31 @@ class LightEncoder(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def _forward_impl(self, x: Tensor) -> Tensor:
+    def _forward_impl(self, xs) -> Tensor:
+        x, sid_nums = xs
+
+        se = self.sid_embedding(sid_nums)
+        
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
 
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
         x = self.layer1(x)
+
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
         x = self.layer2(x)
+
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
         mean = self.layer3(x)
         logvar = self.logvar(x)
 
         return mean, logvar
 
-    def forward(self, x: Tensor) -> Tensor:
-        return self._forward_impl(x)
+    def forward(self, xs) -> Tensor:
+        return self._forward_impl(xs)

@@ -59,6 +59,7 @@ class PatchCollection(Dataset):
             self.samples[s].data[y:y+ps,x:x+ps,:]
             for s, x, y, ps in self.meta[['sid','x','y','patchsize']].values
             ])
+        self.meta['sid_num'] = pd.factorize(self.meta.sid)[0]
 
         ix = np.random.choice(len(self), min(50000, len(self)), replace=False)
         subset = self.patches[ix]
@@ -78,7 +79,8 @@ class PatchCollection(Dataset):
 
     def __getitem__(self, idx):
         patches = self.patches[idx]
+        sid_nums = self.meta.sid_num.values[idx]
         if self.dim_order == 'numpy':
-            return patches
+            return patches, sid_nums
         else:
-            return self.transform(patches)
+            return self.transform(patches), torch.tensor(sid_nums)
