@@ -97,11 +97,7 @@ class LightDecoder(nn.Module):
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
 
-        sid_embedding_dim = 4
-        self.sid_embedding = nn.Embedding(nsids, sid_embedding_dim)
-        # self.sid_embedding = lambda s: torch.nn.functional.one_hot(s, num_classes=nsids)
-
-        self.inplanes = 16+sid_embedding_dim # It should be the shape of the output image CHANEL from the previous layer (layer1).
+        self.inplanes = 16 # It should be the shape of the output image CHANEL from the previous layer (layer1).
         self.dilation = 1
         self.groups = groups
         self.base_width = width_per_group
@@ -109,10 +105,9 @@ class LightDecoder(nn.Module):
         self.bn1 = norm_layer(ncolors)
         self.relu = nn.ReLU(inplace=True)
 
-        self.layer3 = self._make_layer(block, 64+sid_embedding_dim, layers[2], stride=2, last_block_dim=32)
-        self.layer2 = self._make_layer(block, 32+sid_embedding_dim, layers[1], stride=2, last_block_dim=16)
-        self.layer1 = self._make_layer(block, 16+sid_embedding_dim, layers[0], stride=1 ,output_padding = 0, last_block_dim=16) # NOTE: last_block_dim must be equal with the initila self.inplanes
-
+        self.layer3 = self._make_layer(block, 64, layers[2], stride=2, last_block_dim=32)
+        self.layer2 = self._make_layer(block, 32, layers[1], stride=2, last_block_dim=16)
+        self.layer1 = self._make_layer(block, 16, layers[0], stride=1 ,output_padding = 0, last_block_dim=16) # NOTE: last_block_dim must be equal with the initila self.inplanes
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -184,22 +179,9 @@ class LightDecoder(nn.Module):
     def _forward_impl(self, xs) -> Tensor:
         x, sid_nums = xs
 
-        se = self.sid_embedding(sid_nums)
-
-        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
-        x = torch.cat((x, s), dim=1)
         x = self.layer3(x)
-
-        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
-        x = torch.cat((x, s), dim=1)
         x = self.layer2(x)
-
-        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
-        x = torch.cat((x, s), dim=1)
         x = self.layer1(x)
-
-        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
-        x = torch.cat((x, s), dim=1)
         x = self.de_conv1(x)
         x = self.bn1(x)
         

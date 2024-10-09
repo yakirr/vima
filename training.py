@@ -135,7 +135,8 @@ def detailed_per_epoch_logging(model, val_dataset, epoch, epoch_start_time, rlos
 def full_training(model : nn.Module, train_dataset : Dataset,
         val_dataset : Dataset, optimizer : torch.optim.Optimizer,
         scheduler : LRScheduler, batch_size : int=128, n_epochs : int=10,
-        kl_weight : float=1, per_epoch_logging=simple_per_epoch_logging,
+        kl_weight : float=1, kl_warmup : bool=False,
+        per_epoch_logging=simple_per_epoch_logging,
         per_batch_logging=per_batch_logging, per_epoch_kwargs={}):
     best_val_loss = float('inf')
     losslogs = []
@@ -146,7 +147,7 @@ def full_training(model : nn.Module, train_dataset : Dataset,
         for epoch in range(1, n_epochs + 1):
             epoch_start_time = time.time()
             losslog = train_one_epoch(
-                model, train_dataset, optimizer, scheduler, batch_size, kl_weight=kl_weight * min(epoch / 5, 1),
+                model, train_dataset, optimizer, scheduler, batch_size, kl_weight=kl_weight if kl_warmup else kl_weight * min((epoch-0) / 5, 1),
                 per_batch_logging=per_batch_logging)
             rlosses, _ = evaluate(model, val_dataset, detailed=True, subset=range(0, len(val_dataset), max(1, len(val_dataset)//2000)))
             scheduler.step()
@@ -161,9 +162,9 @@ def full_training(model : nn.Module, train_dataset : Dataset,
 
             if rlosses.mean() < best_val_loss:
                 best_val_loss = rlosses.mean()
-                # torch.save(model.state_dict(), best_model_params_path)
+                torch.save(model.state_dict(), best_model_params_path)
 
-        # model.load_state_dict(torch.load(best_model_params_path)) # load best model states
+        model.load_state_dict(torch.load(best_model_params_path)) # load best model states
     return model, losslogs_sofar
 
 def train_test_split(P, breakdown=[0.8,0.2], seed=0):

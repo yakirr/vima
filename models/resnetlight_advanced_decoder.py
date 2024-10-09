@@ -1,31 +1,33 @@
 from typing import Callable, List, Optional, Type
-import copy
 
 import torch.nn as nn
 import torch
 from torch import Tensor
 
-"""From https://pytorch.org/vision/main/_modules/torchvision/models/resnet.html#resnet18"""
 
-def conv3x3(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1, dilation: int = 1) -> nn.Conv2d:
+"""Based on https://pytorch.org/vision/main/_modules/torchvision/models/resnet.html#resnet18"""
+
+
+def conv3x3Transposed(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1, dilation: int = 1, output_padding: int = 0) -> nn.Conv2d:
     """3x3 convolution with padding"""
-    return nn.Conv2d(
+    return nn.ConvTranspose2d(
         in_planes,
         out_planes,
         kernel_size=3,
         stride=stride,
         padding=dilation,
+        output_padding = output_padding, # output_padding is neccessary to invert conv2d with stride > 1
         groups=groups,
         bias=False,
         dilation=dilation,
     )
 
-def conv1x1(in_planes: int, out_planes: int, stride: int = 1) -> nn.Conv2d:
+def conv1x1Transposed(in_planes: int, out_planes: int, stride: int = 1, output_padding: int = 0) -> nn.Conv2d:
     """1x1 convolution"""
-    return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
+    return nn.ConvTranspose2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False, output_padding = output_padding)
 
 
-class LightBasicBlockEnc(nn.Module):
+class LightBasicBlockDec(nn.Module):
     """The basic block architecture of resnet-18 network for smaller input images."""
     expansion: int = 1
 
@@ -34,7 +36,8 @@ class LightBasicBlockEnc(nn.Module):
         inplanes: int,
         planes: int,
         stride: int = 1,
-        downsample: Optional[nn.Module] = None,
+        output_padding: int = 0,
+        upsample: Optional[nn.Module] = None,
         groups: int = 1,
         base_width: int = 64,
         dilation: int = 1,
@@ -48,82 +51,68 @@ class LightBasicBlockEnc(nn.Module):
         if dilation > 1:
             raise NotImplementedError("Dilation > 1 not supported in BasicBlock")
         # Both self.conv1 and self.downsample layers downsample the input when stride != 1
-        self.conv1 = conv3x3(inplanes, planes, stride)
-        self.bn1 = norm_layer(planes)
+        self.conv1 = conv3x3Transposed(planes, inplanes, stride, output_padding=output_padding)
+        self.bn1 = norm_layer(inplanes)
         self.relu = nn.ReLU(inplace=True)
-        self.conv2 = conv3x3(planes, planes)
+        self.conv2 = conv3x3Transposed(planes, planes)
         self.bn2 = norm_layer(planes)
-        self.downsample = downsample
+        self.upsample = upsample
+        self.stride = stride
 
     def forward(self, x: Tensor) -> Tensor:
         identity = x
-        out = self.conv1(x)
-        out = self.bn1(out)
+        out = self.conv2(x)
+        out = self.bn2(out)
         out = self.relu(out)
 
-        out = self.conv2(out)
-        out = self.bn2(out)
+        out = self.conv1(out)
+        out = self.bn1(out)
 
-        if self.downsample is not None:
-            identity = self.downsample(x)
+        if self.upsample is not None:
+            identity = self.upsample(x)
 
         out += identity
         out = self.relu(out)
-
         return out
 
 
 
-class LightEncoder(nn.Module):
-    """The encoder model, following the architecture of resnet-18 
+class LightDecoder(nn.Module):
+    """The decoder model, following the architecture of resnet-18 
     for smaller input images."""
     def __init__(
         self,
         ncolors: int,
         nsids: int,
         nlatent: int,
-        block: Type[LightBasicBlockEnc],
+        block: Type[LightBasicBlockDec],
         layers: List[int],
         zero_init_residual: bool = False,
         groups: int = 1,
         width_per_group: int = 64,
-        replace_stride_with_dilation: Optional[List[bool]] = None,
-        norm_layer: Optional[Callable[..., nn.Module]] = None,
+        norm_layer: Optional[Callable[..., nn.Module]] = None
     ) -> None:
         super().__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
 
-        self.inplanes = 16
-        self.dilation = 1
-        if replace_stride_with_dilation is None:
-            # each element in the tuple indicates if we should replace
-            # the 2x2 stride with a dilated convolution instead
-            replace_stride_with_dilation = [False, False, False]
-        if len(replace_stride_with_dilation) != 3:
-            raise ValueError(
-                "replace_stride_with_dilation should be None "
-                f"or a 3-element tuple, got {replace_stride_with_dilation}"
-            )
-
         sid_embedding_dim = 4
-        # self.sid_embedding = lambda s: torch.nn.functional.one_hot(s, num_classes=nsids)
         self.sid_embedding = nn.Embedding(nsids, sid_embedding_dim)
 
+        self.inplanes = 16+sid_embedding_dim # It should be the shape of the output image CHANEL from the previous layer (layer1).
+        self.dilation = 1
         self.groups = groups
         self.base_width = width_per_group
-        self.conv1 = conv3x3(ncolors + sid_embedding_dim, self.inplanes)
-        self.bn1 = norm_layer(self.inplanes)
+        self.de_conv1 = conv3x3Transposed(self.inplanes, ncolors)
+        self.bn1 = norm_layer(ncolors)
         self.relu = nn.ReLU(inplace=True)
-        
-        self.inplanes += sid_embedding_dim
-        self.layer1 = self._make_layer(block, 16, layers[0])
-        self.inplanes += sid_embedding_dim
-        self.layer2 = self._make_layer(block, 32, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
-        self.inplanes += sid_embedding_dim
-        self.layer3 = self._make_layer(block, 64, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
-        self.logvar = copy.deepcopy(self.layer3)
+
+        self.layer3 = self._make_layer(block, 64+sid_embedding_dim, layers[2], stride=2, last_block_dim=32)
+        self.layer2 = self._make_layer(block, 32+sid_embedding_dim, layers[1], stride=2, last_block_dim=16)
+        self.layer1 = self._make_layer(block, 16+sid_embedding_dim, layers[0], stride=1 ,output_padding = 0, last_block_dim=16) # NOTE: last_block_dim must be equal with the initila self.inplanes
+
+        self.layer4 = nn.Sequential(nn.Linear(nlatent+sid_embedding_dim, 64*10*10), nn.Unflatten(dim=1, unflattened_size=(64, 10, 10)))
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -137,38 +126,27 @@ class LightEncoder(nn.Module):
         # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
         if zero_init_residual:
             for m in self.modules():
-                if isinstance(m, LightBasicBlockEnc) and m.bn2.weight is not None:
+                if isinstance(m, LightBasicBlockDec) and m.bn2.weight is not None:
                     nn.init.constant_(m.bn2.weight, 0)  # type: ignore[arg-type]
 
     def _make_layer(
         self,
-        block: Type[LightBasicBlockEnc],
+        block: Type[LightBasicBlockDec],
         planes: int,
         blocks: int,
-        stride: int = 1,
-        dilate: bool = False,
+        stride: int = 2,
+        output_padding: int = 1, # NOTE: output_padding will correct the dimensions of inverting conv2d with stride>1.
+        # More info:https://pytorch.org/docs/stable/generated/torch.nn.ConvTranspose2d.html
+        last_block_dim: int = 0,
     ) -> nn.Sequential:
         norm_layer = self._norm_layer
-        downsample = None
+        upsample = None
         previous_dilation = self.dilation
-        if dilate:
-            self.dilation *= stride
-            stride = 1
-        if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                conv3x3(self.inplanes, planes * block.expansion, stride), 
-                # If we use conv1x1 here, then we should also use it in the decoder 
-                # part. But some pixels will be left unconstructed (simple noise) on decoding.
-                norm_layer(planes * block.expansion),
-            )
 
         layers = []
-        layers.append(
-            block(
-                self.inplanes, planes, stride, downsample, self.groups, self.base_width, previous_dilation, norm_layer
-            )
-        )
+
         self.inplanes = planes * block.expansion
+
         for _ in range(1, blocks):
             layers.append(
                 block(
@@ -181,22 +159,39 @@ class LightEncoder(nn.Module):
                 )
             )
 
+        if last_block_dim == 0:
+            last_block_dim = self.inplanes//2
+
+        if stride != 1 or self.inplanes != planes * block.expansion:
+            upsample = nn.Sequential(
+                conv3x3Transposed(planes * block.expansion, last_block_dim, stride, output_padding=1),
+                # conv1x1 will not work for this architecture since information about neighbor pixels will be missing 
+                # and cannot be reconstructed (there is no pooling layer). conv3x3 is an actual convolution layer where
+                # info from neighbor pixels are included to the output pixel.
+                norm_layer(last_block_dim),
+            )
+        elif planes != last_block_dim:
+            upsample = nn.Sequential(
+                conv3x3Transposed(self.inplanes, last_block_dim, stride),
+                norm_layer(last_block_dim),
+            )
+
+        layers.append( block(
+                last_block_dim, planes, stride, output_padding, upsample, self.groups, self.base_width, previous_dilation, norm_layer
+            ))
         return nn.Sequential(*layers)
 
     def _forward_impl(self, xs) -> Tensor:
         x, sid_nums = xs
 
         se = self.sid_embedding(sid_nums)
-        
-        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
-        x = torch.cat((x, s), dim=1)
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
+
+        x = torch.cat((x, se), dim=1)
+        x = self.layer4(x)
 
         s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
         x = torch.cat((x, s), dim=1)
-        x = self.layer1(x)
+        x = self.layer3(x)
 
         s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
         x = torch.cat((x, s), dim=1)
@@ -204,10 +199,15 @@ class LightEncoder(nn.Module):
 
         s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
         x = torch.cat((x, s), dim=1)
-        mean = self.layer3(x)
-        logvar = self.logvar(x)
+        x = self.layer1(x)
 
-        return mean, logvar
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
+        x = self.de_conv1(x)
+        x = self.bn1(x)
+        
+        return x
+
 
     def forward(self, xs) -> Tensor:
         return self._forward_impl(xs)
