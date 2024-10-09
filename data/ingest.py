@@ -132,8 +132,8 @@ def write_masks(pixelsdir, outdir, get_foreground, sids, plot=True):
             plt.show()
             
             subset = s.where(mask, other=0).sel(marker=s.marker[::10])
-            norm = mcolors.Normalize(vmin = subset.min(), vmax = 0.95 * subset.max())
-            subset.plot(col='marker', col_wrap=4, norm = norm)
+            norm = mcolors.Normalize(vmin=subset.min(), vmax=0.95*subset.max())
+            subset.plot(col='marker', col_wrap=4, norm=norm)
             plt.show()
         
         gc.collect()
