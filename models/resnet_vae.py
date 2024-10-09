@@ -2,14 +2,11 @@ from torch import nn, Tensor
 import torch
 
 from .vae import VAE
-from .resnet_using_basic_block_encoder import Encoder, BasicBlockEnc
-from .resnet_using_basic_block_decoder import Decoder, BasicBlockDec
 
-from . import resnet_using_light_basic_block_encoder as enc
-from . import resnet_using_light_basic_block_decoder as dec
-from importlib import reload
-reload(enc)
-reload(dec)
+from . import resnetlight_simple_encoder as simple_enc
+from . import resnetlight_simple_decoder as simple_dec
+from . import resnetlight_advanced_encoder as adv_enc
+from . import resnetlight_advanced_decoder as adv_dec
 
 # based on https://github.com/eleannavali/resnet-18-autoencoder
 
@@ -24,7 +21,7 @@ class ResnetVAE(VAE):
             of network, 34 layers for default only network and 20 layers for light network. 
     """
 
-    def __init__(self, nsids, network='default', num_layers=18, nlatent=100, ncolors=5, variational=True):
+    def __init__(self, nsids, network='default', mode='simple', num_layers=18, nlatent=20, ncolors=5, variational=True):
         """Initialize the autoencoder.
 
         Args:
@@ -35,22 +32,27 @@ class ResnetVAE(VAE):
         super().__init__()
         self.variational = variational
         self.network = network
+        self.mode = mode
+
         if self.network == 'default':
-            if num_layers==18:
-                self.encoder = Encoder(BasicBlockEnc, [2, 2, 2, 2])
-                self.decoder = Decoder(BasicBlockDec, [2, 2, 2, 2])
-            elif num_layers==34:
-                self.encoder = Encoder(BasicBlockEnc, [3, 4, 6, 3])
-                self.decoder = Decoder(BasicBlockDec, [3, 4, 6, 3]) 
-            else:
-                raise NotImplementedError("Only resnet 18 & 34 autoencoder have been implemented for images size >= 64x64.")
+            # if num_layers==18:
+            #     self.encoder = Encoder(BasicBlockEnc, [2, 2, 2, 2])
+            #     self.decoder = Decoder(BasicBlockDec, [2, 2, 2, 2])
+            # elif num_layers==34:
+            #     self.encoder = Encoder(BasicBlockEnc, [3, 4, 6, 3])
+            #     self.decoder = Decoder(BasicBlockDec, [3, 4, 6, 3]) 
+            # else:
+            #     raise NotImplementedError("Only resnet 18 & 34 autoencoder have been implemented for images size >= 64x64.")
+            raise NotImplementedError("Only light network is supported currently.")
         elif self.network == 'light':
+            enc = simple_enc if mode == 'simple' else adv_enc
+            dec = simple_dec if mode == 'simple' else adv_dec
             if num_layers==18:
                 self.encoder = enc.LightEncoder(ncolors, nsids, nlatent, enc.LightBasicBlockEnc, [2, 2, 2]) 
                 self.decoder = dec.LightDecoder(ncolors, nsids, nlatent, dec.LightBasicBlockDec, [2, 2, 2]) 
             elif num_layers==20:
                 self.encoder = enc.LightEncoder(ncolors, nlatent, enc.LightBasicBlockEnc, [3, 3, 3]) 
-                self.decoder = enc.LightDecoder(ncolors, nlatent, dec.LightBasicBlockDec, [3, 3, 3]) 
+                self.decoder = dec.LightDecoder(ncolors, nlatent, dec.LightBasicBlockDec, [3, 3, 3]) 
             else:
                 raise NotImplementedError("Only resnet 18 & 20 autoencoder have been implemented for images size < 64x64.")
         else:
