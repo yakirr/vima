@@ -13,7 +13,8 @@ from . import vis as tv
 from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 
-def reconstruction_loss(x_true : Tensor, x_pred : Tensor, per_sample: bool=False):
+def reconstruction_loss(x_true, x_pred : Tensor, per_sample: bool=False):
+    x_true, _ = x_true
     sse = torch.sum((x_pred - x_true)**2, dim=(1,2,3))
     sse /= (x_true.shape[1]*x_true.shape[2]*x_true.shape[3])
     
@@ -127,13 +128,15 @@ def detailed_per_epoch_logging(model, val_dataset, epoch, epoch_start_time, rlos
     print(f'epoch {epoch}. best validation reconstruction error = {losslog.val_rloss.min()}')
     print(f'\ttotal time: {time.time() - epoch_start_time}')
     ix = np.argsort(rlosses)
-    examples = val_dataset[list(ix[::len(ix)//12])].permute(0,2,3,1)
-    tv.plot_with_reconstruction(model, examples, channels=range(examples.shape[-1]), pmin=Pmin, pmax=Pmax)
+    examples = val_dataset[list(ix[::len(ix)//12])]
+    examples = (examples[0].permute(0,2,3,1), examples[1])
+    tv.plot_with_reconstruction(model, examples, channels=range(examples[0].shape[-1]), pmin=Pmin, pmax=Pmax)
 
 def full_training(model : nn.Module, train_dataset : Dataset,
         val_dataset : Dataset, optimizer : torch.optim.Optimizer,
         scheduler : LRScheduler, batch_size : int=128, n_epochs : int=10,
-        kl_weight : float=1, per_epoch_logging=simple_per_epoch_logging,
+        kl_weight : float=1, kl_warmup : bool=False,
+        per_epoch_logging=simple_per_epoch_logging,
         per_batch_logging=per_batch_logging, per_epoch_kwargs={}):
     best_val_loss = float('inf')
     losslogs = []
@@ -144,7 +147,7 @@ def full_training(model : nn.Module, train_dataset : Dataset,
         for epoch in range(1, n_epochs + 1):
             epoch_start_time = time.time()
             losslog = train_one_epoch(
-                model, train_dataset, optimizer, scheduler, batch_size, kl_weight=kl_weight,
+                model, train_dataset, optimizer, scheduler, batch_size, kl_weight=kl_weight if kl_warmup else kl_weight * min((epoch-0) / 5, 1),
                 per_batch_logging=per_batch_logging)
             rlosses, _ = evaluate(model, val_dataset, detailed=True, subset=range(0, len(val_dataset), max(1, len(val_dataset)//2000)))
             scheduler.step()

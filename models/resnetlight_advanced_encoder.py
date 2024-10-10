@@ -1,6 +1,8 @@
 from typing import Callable, List, Optional, Type
+import copy
 
 import torch.nn as nn
+import torch
 from torch import Tensor
 
 """From https://pytorch.org/vision/main/_modules/torchvision/models/resnet.html#resnet18"""
@@ -23,9 +25,8 @@ def conv1x1(in_planes: int, out_planes: int, stride: int = 1) -> nn.Conv2d:
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
 
-class BasicBlockEnc(nn.Module):
-    """The basic block architecture of resnet-18 network.
-    """
+class LightBasicBlockEnc(nn.Module):
+    """The basic block architecture of resnet-18 network for smaller input images."""
     expansion: int = 1
 
     def __init__(
@@ -53,7 +54,6 @@ class BasicBlockEnc(nn.Module):
         self.conv2 = conv3x3(planes, planes)
         self.bn2 = norm_layer(planes)
         self.downsample = downsample
-        self.stride = stride
 
     def forward(self, x: Tensor) -> Tensor:
         identity = x
@@ -74,12 +74,15 @@ class BasicBlockEnc(nn.Module):
 
 
 
-class Encoder(nn.Module):
-    """The encoder model.
-    """
+class LightEncoder(nn.Module):
+    """The encoder model, following the architecture of resnet-18 
+    for smaller input images."""
     def __init__(
         self,
-        block: Type[BasicBlockEnc],
+        ncolors: int,
+        nsids: int,
+        nlatent: int,
+        block: Type[LightBasicBlockEnc],
         layers: List[int],
         zero_init_residual: bool = False,
         groups: int = 1,
@@ -92,7 +95,7 @@ class Encoder(nn.Module):
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
 
-        self.inplanes = 64
+        self.inplanes = 16
         self.dilation = 1
         if replace_stride_with_dilation is None:
             # each element in the tuple indicates if we should replace
@@ -103,16 +106,24 @@ class Encoder(nn.Module):
                 "replace_stride_with_dilation should be None "
                 f"or a 3-element tuple, got {replace_stride_with_dilation}"
             )
+
+        sid_embedding_dim = 4
+        self.sid_embedding = nn.Embedding(nsids, sid_embedding_dim)
+
         self.groups = groups
         self.base_width = width_per_group
-        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
+        self.conv1 = conv3x3(ncolors + sid_embedding_dim, self.inplanes)
         self.bn1 = norm_layer(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
+        
+        self.inplanes += sid_embedding_dim
+        self.layer1 = self._make_layer(block, 16, layers[0])
+        self.inplanes += sid_embedding_dim
+        self.layer2 = self._make_layer(block, 32, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
+        self.inplanes += sid_embedding_dim
+        self.layer3 = self._make_layer(block, 64, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
+        self.layer4 = nn.Sequential(nn.Flatten(start_dim=1), nn.Linear((64+sid_embedding_dim)*10*10, nlatent))
+        self.logvar = copy.deepcopy(self.layer4)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -126,12 +137,12 @@ class Encoder(nn.Module):
         # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
         if zero_init_residual:
             for m in self.modules():
-                if isinstance(m, BasicBlockEnc) and m.bn2.weight is not None:
+                if isinstance(m, LightBasicBlockEnc) and m.bn2.weight is not None:
                     nn.init.constant_(m.bn2.weight, 0)  # type: ignore[arg-type]
 
     def _make_layer(
         self,
-        block: Type[BasicBlockEnc],
+        block: Type[LightBasicBlockEnc],
         planes: int,
         blocks: int,
         stride: int = 1,
@@ -145,7 +156,9 @@ class Encoder(nn.Module):
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
-                conv1x1(self.inplanes, planes * block.expansion, stride),
+                conv3x3(self.inplanes, planes * block.expansion, stride), 
+                # If we use conv1x1 here, then we should also use it in the decoder 
+                # part. But some pixels will be left unconstructed (simple noise) on decoding.
                 norm_layer(planes * block.expansion),
             )
 
@@ -170,20 +183,35 @@ class Encoder(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def _forward_impl(self, x: Tensor) -> Tensor:
+    def _forward_impl(self, xs) -> Tensor:
+        x, sid_nums = xs
+
+        se = self.sid_embedding(sid_nums)
+        
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        x = self.maxpool(x)
 
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
         x = self.layer1(x)
+
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
         x = self.layer2(x)
+
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
         x = self.layer3(x)
-        x = self.layer4(x)
 
-        return x
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
+        mean = self.layer4(x)
+        logvar = self.logvar(x)
 
-    def forward(self, x: Tensor) -> Tensor:
-        return self._forward_impl(x)
+        return mean, logvar
 
-
+    def forward(self, xs) -> Tensor:
+        return self._forward_impl(xs)
