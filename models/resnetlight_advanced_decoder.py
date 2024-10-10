@@ -1,6 +1,7 @@
 from typing import Callable, List, Optional, Type
 
 import torch.nn as nn
+import torch
 from torch import Tensor
 
 
@@ -8,8 +9,7 @@ from torch import Tensor
 
 
 def conv3x3Transposed(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1, dilation: int = 1, output_padding: int = 0) -> nn.Conv2d:
-    """3x3 convolution with padding
-    """
+    """3x3 convolution with padding"""
     return nn.ConvTranspose2d(
         in_planes,
         out_planes,
@@ -23,14 +23,12 @@ def conv3x3Transposed(in_planes: int, out_planes: int, stride: int = 1, groups: 
     )
 
 def conv1x1Transposed(in_planes: int, out_planes: int, stride: int = 1, output_padding: int = 0) -> nn.Conv2d:
-    """1x1 convolution
-    """
+    """1x1 convolution"""
     return nn.ConvTranspose2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False, output_padding = output_padding)
 
 
-class BasicBlockDec(nn.Module):
-    """The basic block architecture of resnet-18 network.
-    """
+class LightBasicBlockDec(nn.Module):
+    """The basic block architecture of resnet-18 network for smaller input images."""
     expansion: int = 1
 
     def __init__(
@@ -79,14 +77,15 @@ class BasicBlockDec(nn.Module):
 
 
 
-
-
-class Decoder(nn.Module):
-    """The decoder model.
-    """
+class LightDecoder(nn.Module):
+    """The decoder model, following the architecture of resnet-18 
+    for smaller input images."""
     def __init__(
         self,
-        block: Type[BasicBlockDec],
+        ncolors: int,
+        nsids: int,
+        nlatent: int,
+        block: Type[LightBasicBlockDec],
         layers: List[int],
         zero_init_residual: bool = False,
         groups: int = 1,
@@ -98,20 +97,22 @@ class Decoder(nn.Module):
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
 
-        self.inplanes = 64 # change from 2048 to 64. It should be the shape of the output image chanel.
+        sid_embedding_dim = 4
+        self.sid_embedding = nn.Embedding(nsids, sid_embedding_dim)
+
+        self.inplanes = 16+sid_embedding_dim # It should be the shape of the output image CHANEL from the previous layer (layer1).
         self.dilation = 1
         self.groups = groups
         self.base_width = width_per_group
-        self.de_conv1 = nn.ConvTranspose2d(self.inplanes, 3, kernel_size=7, stride=2, padding=3, bias=False, output_padding=1)
-        self.bn1 = norm_layer(3)
+        self.de_conv1 = conv3x3Transposed(self.inplanes, ncolors)
+        self.bn1 = norm_layer(ncolors)
         self.relu = nn.ReLU(inplace=True)
-        self.unpool = nn.Upsample(scale_factor=2, mode='bilinear') # NOTE: invert max pooling
 
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.layer1 = self._make_layer(block, 64, layers[0], stride=1 ,output_padding = 0, last_block_dim=64)
+        self.layer3 = self._make_layer(block, 64+sid_embedding_dim, layers[2], stride=2, last_block_dim=32)
+        self.layer2 = self._make_layer(block, 32+sid_embedding_dim, layers[1], stride=2, last_block_dim=16)
+        self.layer1 = self._make_layer(block, 16+sid_embedding_dim, layers[0], stride=1 ,output_padding = 0, last_block_dim=16) # NOTE: last_block_dim must be equal with the initila self.inplanes
 
+        self.layer4 = nn.Sequential(nn.Linear(nlatent+sid_embedding_dim, 64*10*10), nn.Unflatten(dim=1, unflattened_size=(64, 10, 10)))
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -125,16 +126,16 @@ class Decoder(nn.Module):
         # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
         if zero_init_residual:
             for m in self.modules():
-                if isinstance(m, BasicBlockDec) and m.bn2.weight is not None:
+                if isinstance(m, LightBasicBlockDec) and m.bn2.weight is not None:
                     nn.init.constant_(m.bn2.weight, 0)  # type: ignore[arg-type]
 
     def _make_layer(
         self,
-        block: Type[BasicBlockDec],
+        block: Type[LightBasicBlockDec],
         planes: int,
         blocks: int,
         stride: int = 2,
-        output_padding: int = 1, # NOTE: output_padding will correct the dimensions of inverting conv2d with stride > 1.
+        output_padding: int = 1, # NOTE: output_padding will correct the dimensions of inverting conv2d with stride>1.
         # More info:https://pytorch.org/docs/stable/generated/torch.nn.ConvTranspose2d.html
         last_block_dim: int = 0,
     ) -> nn.Sequential:
@@ -163,7 +164,15 @@ class Decoder(nn.Module):
 
         if stride != 1 or self.inplanes != planes * block.expansion:
             upsample = nn.Sequential(
-                conv1x1Transposed(planes * block.expansion, last_block_dim, stride, output_padding),
+                conv3x3Transposed(planes * block.expansion, last_block_dim, stride, output_padding=1),
+                # conv1x1 will not work for this architecture since information about neighbor pixels will be missing 
+                # and cannot be reconstructed (there is no pooling layer). conv3x3 is an actual convolution layer where
+                # info from neighbor pixels are included to the output pixel.
+                norm_layer(last_block_dim),
+            )
+        elif planes != last_block_dim:
+            upsample = nn.Sequential(
+                conv3x3Transposed(self.inplanes, last_block_dim, stride),
                 norm_layer(last_block_dim),
             )
 
@@ -172,18 +181,33 @@ class Decoder(nn.Module):
             ))
         return nn.Sequential(*layers)
 
-    def _forward_impl(self, x: Tensor) -> Tensor:
+    def _forward_impl(self, xs) -> Tensor:
+        x, sid_nums = xs
+
+        se = self.sid_embedding(sid_nums)
+
+        x = torch.cat((x, se), dim=1)
         x = self.layer4(x)
+
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
         x = self.layer3(x)
+
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
         x = self.layer2(x)
+
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
         x = self.layer1(x)
 
-        x = self.unpool(x)
+        s = se.view(len(x), -1, 1, 1).expand(-1, -1, x.shape[2], x.shape[3])
+        x = torch.cat((x, s), dim=1)
         x = self.de_conv1(x)
         x = self.bn1(x)
-        x = self.relu(x)
+        
         return x
 
 
-    def forward(self, x: Tensor) -> Tensor:
-        return self._forward_impl(x)
+    def forward(self, xs) -> Tensor:
+        return self._forward_impl(xs)

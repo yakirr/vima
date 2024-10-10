@@ -1,6 +1,7 @@
 from typing import Callable, List, Optional, Type
 
 import torch.nn as nn
+import torch
 from torch import Tensor
 
 
@@ -82,6 +83,7 @@ class LightDecoder(nn.Module):
     def __init__(
         self,
         ncolors: int,
+        nsids: int,
         nlatent: int,
         block: Type[LightBasicBlockDec],
         layers: List[int],
@@ -103,11 +105,9 @@ class LightDecoder(nn.Module):
         self.bn1 = norm_layer(ncolors)
         self.relu = nn.ReLU(inplace=True)
 
-        # self.reshape = nn.Sequential(nn.Linear(nlatent, 64*8*8), nn.Unflatten(1, (64, 8, 8)))
-        self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
-        self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, 64, layers[2], stride=2, last_block_dim=32)
+        self.layer2 = self._make_layer(block, 32, layers[1], stride=2, last_block_dim=16)
         self.layer1 = self._make_layer(block, 16, layers[0], stride=1 ,output_padding = 0, last_block_dim=16) # NOTE: last_block_dim must be equal with the initila self.inplanes
-
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -165,24 +165,28 @@ class LightDecoder(nn.Module):
                 # info from neighbor pixels are included to the output pixel.
                 norm_layer(last_block_dim),
             )
+        elif planes != last_block_dim:
+            upsample = nn.Sequential(
+                conv3x3Transposed(self.inplanes, last_block_dim, stride),
+                norm_layer(last_block_dim),
+            )
 
         layers.append( block(
                 last_block_dim, planes, stride, output_padding, upsample, self.groups, self.base_width, previous_dilation, norm_layer
             ))
         return nn.Sequential(*layers)
 
-    def _forward_impl(self, x: Tensor) -> Tensor:
-        # x = self.reshape(x)
+    def _forward_impl(self, xs) -> Tensor:
+        x, sid_nums = xs
+
         x = self.layer3(x)
         x = self.layer2(x)
         x = self.layer1(x)
-
         x = self.de_conv1(x)
         x = self.bn1(x)
-        # x = self.relu(x)
         
         return x
 
 
-    def forward(self, x: Tensor) -> Tensor:
-        return self._forward_impl(x)
+    def forward(self, xs) -> Tensor:
+        return self._forward_impl(xs)
