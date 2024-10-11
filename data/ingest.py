@@ -116,6 +116,21 @@ def foreground_mask_ihc(s, real_markers, neg_ctrls, blur_width=5):
                 coords={'x': totals.x, 'y': totals.y},
                 dims=['y','x'], name=s.name)
 
+def foreground_mask_codex(s, real_markers, neg_ctrls, blur_width=5):
+    # compute totals
+    totals = s.sel(marker=real_markers).sum(dim='marker')
+    totals = np.log1p(totals)
+    totals -= totals.min()
+    totals /= (totals.max()/255)
+    totals = totals.astype('uint16')
+
+    # determine foreground vs background
+    blurred = cv2.GaussianBlur(totals.data,(blur_width, blur_width),0)
+    _, mask = cv2.threshold(blurred,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+    return xr.DataArray(mask.astype('bool'),
+                coords={'x': totals.x, 'y': totals.y},
+                dims=['y','x'], name=s.name)
+
 def write_masks(pixelsdir, outdir, get_foreground, sids, plot=True):
     for sid in sids:
         print('reading', sid)
