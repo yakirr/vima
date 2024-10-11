@@ -152,7 +152,7 @@ def full_training(model : nn.Module, train_dataset : Dataset,
             rlosses, _ = evaluate(model, val_dataset, detailed=True, subset=range(0, len(val_dataset), max(1, len(val_dataset)//2000)))
             scheduler.step()
 
-            losslog['val_rloss'] = np.NaN
+            losslog['val_rloss'] = np.nan
             losslog.val_rloss.values[-1] = rlosses.mean()
             losslogs.append(losslog)
             losslogs_sofar = pd.concat(losslogs, axis=0).reset_index(drop=True)
