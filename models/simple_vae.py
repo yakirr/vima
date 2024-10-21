@@ -31,14 +31,16 @@ class SimpleVAE(VAE):
             nn.ConvTranspose2d(self.nfilters1, ncolors, kernel_size=3, stride=2, padding=1, output_padding=1),
         )
 
-    def encode(self, x : Tensor):
+    def encode(self, xs):
+        x, sid_nums = xs
         output = self.encoder_flatten(self.encoder(x))
         avg_profile = x.mean(axis=(2,3))
         output = self.encoder_end(torch.cat((output, avg_profile), dim=1))
         mean, logvar = torch.split(output, self.latent_dim, dim=1)
         return mean, logvar
 
-    def decode(self, z : Tensor):
+    def decode(self, zs):
+        z, sid_nums = zs
         return self.decoder(z)
 
     def penultimate_layer(self, x : Tensor):
