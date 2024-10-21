@@ -264,7 +264,7 @@ def pca_metapixels(mps, k, plot=True):
         plt.show()
         plt.figure(figsize=(30,2))
         plt.imshow(loadings.T, cmap='seismic', vmin=-0.5, vmax=0.5)
-        plt.xticks(range(len(loadings)), loadings.index)
+        plt.xticks(range(len(loadings)), loadings.index, rotation=90)
         plt.show()
 
     return loadings, C, allmp
