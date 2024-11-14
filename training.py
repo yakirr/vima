@@ -13,6 +13,15 @@ from . import vis as tv
 from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 
+def seed(seed=0, deterministic=True):
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    if deterministic:
+        torch.use_deterministic_algorithms(True)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
 def reconstruction_loss(x_true, x_pred : Tensor, per_sample: bool=False):
     x_true, _ = x_true
     sse = torch.sum((x_pred - x_true)**2, dim=(1,2,3))
@@ -59,7 +68,9 @@ def train_one_epoch(model : nn.Module, train_dataset : Dataset,
     losses = []; vaelosses = []; rlosses = []
     for n, batch in enumerate(train_loader):
         # Forward pass
-        predictions, mean, logvar = model.forward(batch)
+        x, sids = batch
+        noise = 0#0.2 * torch.randn(x.shape[0], x.shape[1]).unsqueeze(-1).unsqueeze(-1).expand(-1, -1, x.shape[2], x.shape[3])
+        predictions, mean, logvar = model.forward([x+noise, sids])
 
         rloss = reconstruction_loss(batch, predictions)
         vaeloss = kl_weight * kl_loss(mean, logvar)
@@ -116,17 +127,18 @@ def detailed_per_epoch_logging(model, val_dataset, epoch, epoch_start_time, rlos
     display.clear_output()
     plt.figure(figsize=(9,3))
     plt.subplot(1,2,1)
-    plt.plot(losslog.loss, label='total loss', alpha=0.5)
-    plt.plot(losslog.rloss, label='recon. loss', alpha=0.5)
-    plt.scatter(losslog.index, losslog.val_rloss, marker='x', label='recon. loss (val)', color='green')
-    plt.scatter(np.argmin(losslog.val_rloss), losslog.val_rloss.min(), color='red')
-    plt.legend()
-    plt.ylim(0, 1.1*np.percentile(losslog.loss.values, 95))
-    plt.subplot(1,2,2)
-    plt.hist(rlosses, bins=50)
-    plt.show()
-    print(f'epoch {epoch}. best validation reconstruction error = {losslog.val_rloss.min()}')
-    print(f'\ttotal time: {time.time() - epoch_start_time}')
+    if losslog is not None:
+        plt.plot(losslog.loss, label='total loss', alpha=0.5)
+        plt.plot(losslog.rloss, label='recon. loss', alpha=0.5)
+        plt.scatter(losslog.index, losslog.val_rloss, marker='x', label='recon. loss (val)', color='green')
+        plt.scatter(np.argmin(losslog.val_rloss), losslog.val_rloss.min(), color='red')
+        plt.legend()
+        plt.ylim(0, 1.1*np.percentile(losslog.loss.values, 95))
+        plt.subplot(1,2,2)
+        plt.hist(rlosses, bins=50)
+        plt.show()
+        print(f'epoch {epoch}. best validation reconstruction error = {losslog.val_rloss.min()}')
+        print(f'\ttotal time: {time.time() - epoch_start_time}')
     ix = np.argsort(rlosses)
     examples = val_dataset[list(ix[::len(ix)//12])]
     examples = (examples[0].permute(0,2,3,1), examples[1])
@@ -167,8 +179,7 @@ def full_training(model : nn.Module, train_dataset : Dataset,
         model.load_state_dict(torch.load(best_model_params_path)) # load best model states
     return model, losslogs_sofar
 
-def train_test_split(P, breakdown=[0.8,0.2], seed=0):
-    torch.manual_seed(seed); np.random.seed(seed); random.seed(seed)
+def train_test_split(P, breakdown=[0.8,0.2]):
     P.pytorch_mode()
     P.augmentation_on()
     return torch.utils.data.random_split(P, breakdown, generator=torch.Generator(device=torch.get_default_device()))
