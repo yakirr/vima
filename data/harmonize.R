@@ -12,7 +12,7 @@ cat('harmonizing\n')
 cat('metadata names:', metadata_names, '\n')
 
 data <- read_feather(infile)
-pcs <- data[, setdiff(names(data), metadata_names)]
+pcs <- data[, grep("^PC", names(data))]
 metadata = data[, metadata_names]
 
 harmPcs <- harmony::RunHarmony(

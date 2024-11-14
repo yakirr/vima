@@ -76,7 +76,10 @@ def df_to_xarray32(df):
         ).astype(np.float32)
 
 def downsample(sample, factor, aggregate=np.mean):
-    pad_width = ((factor - sample.shape[0] % factor, 0), (factor - sample.shape[1] % factor, 0), (0,0))
+    pad_width = (
+        (int(factor - sample.shape[0] % factor), 0),
+        (int(factor - sample.shape[1] % factor), 0),
+        (0,0))
     sample = np.pad(sample, pad_width, mode='constant', constant_values=0)
     smaller = sample.reshape(sample.shape[0], sample.shape[1]//factor, factor, sample.shape[2])
     smaller = aggregate(smaller, axis=2)
@@ -107,7 +110,7 @@ def foreground_mask_ihc(s, real_markers, neg_ctrls, blur_width=5):
     totals = s.sel(marker=real_markers).sum(dim='marker') - s.sel(marker=neg_ctrls).sum(dim='marker')
     totals -= totals.min()
     totals /= (totals.max()/255)
-    totals = totals.astype('uint8')
+    totals = totals.astype('uint16')
 
     # determine foreground vs background
     blurred = cv2.GaussianBlur(totals.data,(blur_width, blur_width),0)
@@ -131,7 +134,7 @@ def foreground_mask_codex(s, real_markers, neg_ctrls, blur_width=5):
                 coords={'x': totals.x, 'y': totals.y},
                 dims=['y','x'], name=s.name)
 
-def write_masks(pixelsdir, outdir, get_foreground, sids, plot=True):
+def write_masks(pixelsdir, outdir, get_foreground, sids, plot=True, vmax=30):
     for sid in sids:
         print('reading', sid)
         s = xr.open_dataarray(f'{pixelsdir}/{sid}.nc').astype(np.float32)
@@ -142,7 +145,7 @@ def write_masks(pixelsdir, outdir, get_foreground, sids, plot=True):
         mask.to_netcdf(f'{outdir}/{sid}.nc', encoding={mask.name: compression}, engine="netcdf4")
 
         if plot:
-            s.sum(dim='marker').plot(cmap='Reds', vmin=0, vmax=30); ar()
+            s.sum(dim='marker').plot(cmap='Reds', vmin=0, vmax=vmax); ar()
             mask.plot(alpha=0.5, vmin=0, vmax=1, cmap='gray', add_colorbar=False)
             plt.show()
             
@@ -318,6 +321,7 @@ def visualize_pixels(pixels, ntoplot, colorby):
         plt.show()
         
         sc.pl.umap(toplot_ad, color=metavar)
+    return toplot_ad
 
 def write_harmonized(masksdir, outdir, harmpixels, sids):
     pcs = [c for c in harmpixels.columns if c.startswith('PC')]

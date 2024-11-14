@@ -21,13 +21,13 @@ class RandomDiscreteRotation:
         return x
 
 class PatchCollection(Dataset):
-    def __init__(self, patchmeta, samples, standardize=True):
+    def __init__(self, patchmeta, samples, standardize=True, percentile_thresh=99):
         self.samples = samples
         self.meta = patchmeta
         self.nchannels = next(iter(samples.values())).sizes['marker']
 
         self.pytorch_mode()
-        self.__preprocess__(standardize)
+        self.__preprocess__(standardize, percentile_thresh)
         self.augmentation_off()
 
     def augmentation_on(self):
@@ -54,7 +54,7 @@ class PatchCollection(Dataset):
         self.augmentation_off()
         print('in numpy mode')
 
-    def __preprocess__(self, standardize):
+    def __preprocess__(self, standardize, percentile_thresh):
         self.patches = np.array([
             self.samples[s].data[y:y+ps,x:x+ps,:]
             for s, x, y, ps in self.meta[['sid','x','y','patchsize']].values
@@ -65,9 +65,9 @@ class PatchCollection(Dataset):
         subset = self.patches[ix]
         self.means = subset.mean(axis=(0,1,2))
         self.stds = subset.std(axis=(0,1,2))
-        percentiles = np.percentile(np.abs(subset), 99, axis=(0,1,2))
-        self.vmin = -self.means - percentiles
-        self.vmax = -self.means + percentiles
+        self.percentiles = np.percentile(np.abs(subset), percentile_thresh, axis=(0,1,2))
+        self.vmin = (-self.means - self.percentiles)/self.stds
+        self.vmax = (-self.means + self.percentiles)/self.stds
         print(f'means: {self.means}')
         print(f'stds: {self.stds}')
 
