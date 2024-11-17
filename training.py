@@ -95,7 +95,7 @@ def train_one_epoch(model : nn.Module, train_dataset : Dataset,
     return pd.DataFrame({'loss':losses, 'rloss':rlosses, 'vaeloss':vaelosses, 'kl_weight':kl_weight})
 
 def evaluate(model : nn.Module, eval_dataset : Dataset, batch_size : int=1000,
-        detailed : bool=False, subset=None):
+        detailed : bool=False, subset=None, sample_from_latent=False, full_loss=True, kl_weight=None):
     if subset is not None:
         eval_dataset = torch.utils.data.Subset(eval_dataset, subset)
 
@@ -105,41 +105,43 @@ def evaluate(model : nn.Module, eval_dataset : Dataset, batch_size : int=1000,
         batch_size=batch_size,
         shuffle=False)
 
-    rlosses = []; embeddings = []
+    losses = []; embeddings = []
     with torch.no_grad():
         for batch in pb(eval_loader):
-            predictions, mean, _ = model.forward(batch, sample_from_latent=False)
+            predictions, mean, logvar = model.forward(batch, sample_from_latent=sample_from_latent)
 
-            rlosses.append(
-                reconstruction_loss(batch, predictions, per_sample=True).detach().cpu().numpy()
-                )
+            loss = reconstruction_loss(batch, predictions, per_sample=True)
+            if full_loss:
+                loss += kl_weight * kl_loss(mean, logvar)
+
+            losses.append(loss.detach().cpu().numpy())
             if detailed: embeddings.append(mean.detach().cpu().numpy())
 
     if detailed:
-        return np.concatenate(rlosses), np.concatenate(embeddings)
+        return np.concatenate(losses), np.concatenate(embeddings)
     else:
-        return np.concatenate(rlosses).mean()
+        return np.concatenate(losses).mean()
 
-def simple_per_epoch_logging(model, val_dataset, epoch, epoch_start_time, rlosses, losslog):
+def simple_per_epoch_logging(model, val_dataset, epoch, epoch_start_time, losses, losslog):
     print(f'end of epoch {epoch}: avg val loss = {rlosses.mean()}')
 
-def detailed_per_epoch_logging(model, val_dataset, epoch, epoch_start_time, rlosses, losslog, Pmin=None, Pmax=None):
+def detailed_per_epoch_logging(model, val_dataset, epoch, epoch_start_time, losses, losslog, Pmin=None, Pmax=None):
     display.clear_output()
     plt.figure(figsize=(9,3))
     plt.subplot(1,2,1)
     if losslog is not None:
         plt.plot(losslog.loss, label='total loss', alpha=0.5)
         plt.plot(losslog.rloss, label='recon. loss', alpha=0.5)
-        plt.scatter(losslog.index, losslog.val_rloss, marker='x', label='recon. loss (val)', color='green')
-        plt.scatter(np.argmin(losslog.val_rloss), losslog.val_rloss.min(), color='red')
+        plt.scatter(losslog.index, losslog.val_loss, marker='x', label='total loss (val)', color='green')
+        plt.scatter(np.argmin(losslog.val_loss), losslog.val_loss.min(), color='red')
         plt.legend()
         plt.ylim(0, 1.1*np.percentile(losslog.loss.values, 95))
         plt.subplot(1,2,2)
-        plt.hist(rlosses, bins=50)
+        plt.hist(losses, bins=50)
         plt.show()
-        print(f'epoch {epoch}. best validation reconstruction error = {losslog.val_rloss.min()}')
+        print(f'epoch {epoch}. best validation loss = {losslog.val_loss.min()}')
         print(f'\ttotal time: {time.time() - epoch_start_time}')
-    ix = np.argsort(rlosses)
+    ix = np.argsort(losses)
     examples = val_dataset[list(ix[::len(ix)//12])]
     examples = (examples[0].permute(0,2,3,1), examples[1])
     tv.plot_with_reconstruction(model, examples, channels=range(examples[0].shape[-1]), pmin=Pmin, pmax=Pmax)
@@ -161,18 +163,19 @@ def full_training(model : nn.Module, train_dataset : Dataset,
             losslog = train_one_epoch(
                 model, train_dataset, optimizer, scheduler, batch_size, kl_weight=kl_weight if kl_warmup else kl_weight * min((epoch-0) / 5, 1),
                 per_batch_logging=per_batch_logging)
-            rlosses, _ = evaluate(model, val_dataset, detailed=True, subset=range(0, len(val_dataset), max(1, len(val_dataset)//2000)))
+            losses, _ = evaluate(model, val_dataset, full_loss=True, kl_weight=kl_weight,
+                detailed=True, subset=range(0, len(val_dataset), max(1, len(val_dataset)//2000)))
             scheduler.step()
 
-            losslog['val_rloss'] = np.nan
-            losslog.val_rloss.values[-1] = rlosses.mean()
+            losslog['val_loss'] = np.nan
+            losslog.val_loss.values[-1] = losses.mean()
             losslogs.append(losslog)
             losslogs_sofar = pd.concat(losslogs, axis=0).reset_index(drop=True)
 
             per_epoch_logging(model, val_dataset, epoch, epoch_start_time, rlosses,
                 losslogs_sofar, **per_epoch_kwargs)
 
-            if rlosses.mean() < best_val_loss:
+            if losses.mean() < best_val_loss:
                 best_val_loss = rlosses.mean()
                 torch.save(model.state_dict(), best_model_params_path)
 
