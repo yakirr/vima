@@ -5,6 +5,7 @@ import anndata as ad
 import scanpy as sc
 import xarray as xr
 import cv2 as cv2
+from skimage.filters import threshold_otsu
 import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -105,18 +106,15 @@ def foreground_mask_st(s, min_ntranscripts=10):
     mask = totals > min_ntranscripts
     return mask
 
-def foreground_mask_ihc(s, real_markers, neg_ctrls, blur_width=5):
-    # compute totals
-    totals = s.sel(marker=real_markers).sum(dim='marker') - s.sel(marker=neg_ctrls).sum(dim='marker')
-    totals -= totals.min()
-    totals /= (totals.max()/255)
-    totals = totals.astype('uint16')
-
-    # determine foreground vs background
-    blurred = cv2.GaussianBlur(totals.data,(blur_width, blur_width),0)
-    _, mask = cv2.threshold(blurred,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-    return xr.DataArray(mask.astype('bool'),
-                coords={'x': totals.x, 'y': totals.y},
+def foreground_mask_ihc(s, real_markers, neg_ctrls, not_imaged_thresh, artifact_thresh, transform=lambda x:x, thresholding_method=threshold_otsu,
+        neg_ctrl_pseudocount=0, blur_width=5):
+    totals = (s.sel(marker=real_markers).sum(dim='marker') / (s.sel(marker=neg_ctrls).sum(dim='marker') + len(neg_ctrls) + neg_ctrl_pseudocount))
+    totals = transform(cv2.GaussianBlur(totals.data, (blur_width, blur_width),0))
+    valid_pixels = totals[(totals > not_imaged_thresh) & (totals < artifact_thresh)]
+    t = thresholding_method(valid_pixels)
+    
+    return xr.DataArray(((totals > t) & (totals < artifact_thresh)).astype('bool'),
+                coords={'x': s.x, 'y': s.y},
                 dims=['y','x'], name=s.name)
 
 def foreground_mask_codex(s, real_markers, neg_ctrls, blur_width=5):
@@ -137,7 +135,7 @@ def foreground_mask_codex(s, real_markers, neg_ctrls, blur_width=5):
 def write_masks(pixelsdir, outdir, get_foreground, sids, plot=True, vmax=30):
     for sid in sids:
         print('reading', sid)
-        s = xr.open_dataarray(f'{pixelsdir}/{sid}.nc').astype(np.float32)
+        s = xr.load_dataarray(f'{pixelsdir}/{sid}.nc').astype(np.float32)
         
         # make mask and save
         mask = get_foreground(s)
@@ -150,7 +148,7 @@ def write_masks(pixelsdir, outdir, get_foreground, sids, plot=True, vmax=30):
             plt.show()
             
             subset = s.where(mask, other=0).sel(marker=s.marker[::10])
-            norm = mcolors.Normalize(vmin=subset.min(), vmax=0.95*subset.max())
+            norm = mcolors.Normalize(vmin=subset.data.min(), vmax=0.95*subset.data.max())
             subset.plot(col='marker', col_wrap=4, norm=norm)
             plt.show()
         

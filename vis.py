@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from minisom import MiniSom
+import scanpy as sc
 from sklearn.preprocessing import scale
 import cv2
 import torch
@@ -134,6 +135,50 @@ def plot_patches_overlaychannels_som(examples, latent, colormaps, nx=5, ny=5, sh
     if show:
         plt.show()
 
+from scipy.optimize import linear_sum_assignment
+def plot_patches_overlaychannels_linsum(patches, latents, colormaps, nx=5, ny=5, show=True, seed=None, scale_factor=1, spacing=None):
+    if nx*ny < len(patches):
+        if seed is not None: np.random.seed(seed)
+        ix = np.random.choice(len(patches), size=nx*ny, replace=False)
+    else:
+        ix = range(len(patches))
+    patches = patches[ix]
+    latents = sc.AnnData(X=latents[ix])
+    sc.pp.neighbors(latents, use_rep='X')
+    sc.tl.umap(latents)
+    gridpoints = np.array([[i,j] for i in range(nx) for j in range(ny)])
+    coords = latents.obsm['X_umap']
+    coords[:,0] = (coords[:,0] - min(coords[:,0])) / (max(coords[:,0])-min(coords[:,0])) * (nx-1)
+    coords[:,1] = (coords[:,1] - min(coords[:,1])) / (max(coords[:,1])-min(coords[:,1])) * (ny-1)
+
+    cost_matrix = np.zeros((len(latents), len(latents)))
+    for i, (gx, gy) in enumerate(gridpoints):
+        for j, (ex, ey) in enumerate(coords):
+            cost_matrix[i, j] = np.linalg.norm([gx - ex, gy - ey])
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    final_grid = {j: i for i, j in zip(row_ind, col_ind)}
+    
+    fig, axs = plt.subplots(nx, ny,
+        figsize=(scale_factor*nx,scale_factor*ny))
+    for i, patch in enumerate(patches):
+        x, y = gridpoints[final_grid[i]]
+        ax = axs[int(x), int(y)]
+        image = apply_colormap(patch, colormaps)
+        ax.imshow(image)
+    for ax in axs.flatten():
+        ax.axis('off')
+        
+    if spacing is None:
+        plt.tight_layout()
+    else:
+        spacing *= scale_factor
+        plt.subplots_adjust(left=spacing/2, right=1-spacing/2, top=1-spacing/2, bottom=spacing/2, wspace=spacing, hspace=spacing)
+    
+    if show:
+        plt.show()
+    else:
+        return fig
+
 def plot_patches_overlaychannels_sorted(examples, colormaps, labels=None, nx=5, ny=5, show=True):
     images = apply_colormap(examples, colormaps)
     
@@ -186,7 +231,7 @@ def spatialplot(samples, sortkey, allpatches, scores, rgbs=[[1.,0.,0.]],
         highlight=None, outline_rgba=[0.,1.,0.,1.], outline_thickness=10,
         skipthresh=10, skipevery=1, stopafter=None,
         vmax=1, ncols=5, size=2, filterempty=False, show=True):
-    toplot = allpatches.sid.value_counts() > skipthresh
+    toplot = allpatches[allpatches.sid.isin(samples.keys())].sid.value_counts() > skipthresh
     nsamples = toplot.sum() // skipevery
     nrows = int(np.ceil(nsamples/ncols))
     fig, axs = plt.subplots(nrows=nrows, ncols=ncols,
@@ -250,3 +295,5 @@ def spatialplot(samples, sortkey, allpatches, scores, rgbs=[[1.,0.,0.]],
 
     if show:
         plt.show()
+    else:
+        return fig

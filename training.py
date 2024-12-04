@@ -123,7 +123,7 @@ def evaluate(model : nn.Module, eval_dataset : Dataset, batch_size : int=1000,
         return np.concatenate(losses).mean()
 
 def simple_per_epoch_logging(model, val_dataset, epoch, epoch_start_time, losses, losslog):
-    print(f'end of epoch {epoch}: avg val loss = {rlosses.mean()}')
+    print(f'end of epoch {epoch}: avg val loss = {losses.mean()}')
 
 def detailed_per_epoch_logging(model, val_dataset, epoch, epoch_start_time, losses, losslog, Pmin=None, Pmax=None):
     display.clear_output()
@@ -172,11 +172,11 @@ def full_training(model : nn.Module, train_dataset : Dataset,
             losslogs.append(losslog)
             losslogs_sofar = pd.concat(losslogs, axis=0).reset_index(drop=True)
 
-            per_epoch_logging(model, val_dataset, epoch, epoch_start_time, rlosses,
+            per_epoch_logging(model, val_dataset, epoch, epoch_start_time, losses,
                 losslogs_sofar, **per_epoch_kwargs)
 
             if losses.mean() < best_val_loss:
-                best_val_loss = rlosses.mean()
+                best_val_loss = losses.mean()
                 torch.save(model.state_dict(), best_model_params_path)
 
         model.load_state_dict(torch.load(best_model_params_path)) # load best model states
