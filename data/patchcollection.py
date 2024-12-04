@@ -21,13 +21,13 @@ class RandomDiscreteRotation:
         return x
 
 class PatchCollection(Dataset):
-    def __init__(self, patchmeta, samples, standardize=True, percentile_thresh=99):
+    def __init__(self, patchmeta, samples, sid_nums=None, standardize=True, percentile_thresh=99):
         self.samples = samples
         self.meta = patchmeta
         self.nchannels = next(iter(samples.values())).sizes['marker']
 
         self.pytorch_mode()
-        self.__preprocess__(standardize, percentile_thresh)
+        self.__preprocess__(standardize, percentile_thresh, sid_nums=sid_nums)
         self.augmentation_off()
 
     def augmentation_on(self):
@@ -54,12 +54,15 @@ class PatchCollection(Dataset):
         self.augmentation_off()
         print('in numpy mode')
 
-    def __preprocess__(self, standardize, percentile_thresh):
+    def __preprocess__(self, standardize, percentile_thresh, sid_nums=None):
         self.patches = np.array([
             self.samples[s].data[y:y+ps,x:x+ps,:]
             for s, x, y, ps in self.meta[['sid','x','y','patchsize']].values
             ])
-        self.meta['sid_num'] = pd.factorize(self.meta.sid)[0]
+        if sid_nums is None:
+            self.meta['sid_num'] = pd.factorize(self.meta.sid)[0]
+        else:
+            self.meta['sid_num'] = self.meta.sid.map(sid_nums)
 
         ix = np.random.choice(len(self), min(50000, len(self)), replace=False)
         subset = self.patches[ix]
