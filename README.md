@@ -1,2 +1,2 @@
-# tpae
-An auto-encoder for patches of tissue in spatial data.
+# vima
+Variational inference-based microniche analysis.
