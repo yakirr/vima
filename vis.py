@@ -209,18 +209,24 @@ def plot_patches_fourcolors(examples, nx=5, ny=5,
 
     plot_patches_overlaychannels(examples, colormaps, nx=nx, ny=ny, show=show)
 
-def diff_markers(patch_avgs, pos_set, neg_set, markernames, labels=['T','F'], nmarkers=10, ascending=False, show=True):
+def diff_markers(patch_avgs, pos_set, neg_set, markernames, labels=['T','F'], nmarkers=10, bothends=False, ascending=False, ax=None, show=True, **kwargs):
+    if ax is None:
+        ax = plt.gca()
+
     marker_diffs = pd.DataFrame(index=markernames, columns=['diff'])
     for m in markernames:
         marker_diffs.loc[m, 'diff'] = patch_avgs.loc[pos_set, m].median() -  patch_avgs.loc[neg_set, m].median()
     marker_diffs = marker_diffs.sort_values(by='diff', ascending=ascending)
     
-    df = pd.melt(patch_avgs, value_vars=marker_diffs[:nmarkers].index.values,
+    if bothends:
+        toplot = np.concatenate([marker_diffs[:nmarkers].index.values, marker_diffs[-nmarkers:].index.values])
+    else:
+        toplot = marker_diffs[:nmarkers].index.values
+    df = pd.melt(patch_avgs, value_vars=toplot,
                  var_name='marker', value_name='value', ignore_index=False)
     df.loc[pos_set, 'status'] = labels[0]
     df.loc[neg_set, 'status'] = labels[1]
-    sns.violinplot(data=df, x='marker', y='value', hue='status')
-    plt.ylabel('level')
+    sns.violinplot(data=df.reset_index(drop=True), x='marker', y='value', hue='status', ax=ax, **kwargs)
     if show:
         plt.show()
 
@@ -228,11 +234,11 @@ def diff_markers(patch_avgs, pos_set, neg_set, markernames, labels=['T','F'], nm
 
 def spatialplot(samples, sortkey, allpatches, scores, rgbs=[[1.,0.,0.]],
         labels=None,
-        highlight=None, outline_rgba=[0.,1.,0.,1.], outline_thickness=10,
-        skipthresh=10, skipevery=1, stopafter=None,
+        highlights=None, outline_rgbas=None, outline_thickness=10,
+        skipthresh=10, skipevery=1, stopafter=None, label_fontsize=12,
         vmax=1, ncols=5, size=2, filterempty=False, show=True):
     toplot = allpatches[allpatches.sid.isin(samples.keys())].sid.value_counts() > skipthresh
-    nsamples = toplot.sum() // skipevery
+    nsamples = len(sortkey[toplot].sort_values().index[::skipevery])
     nrows = int(np.ceil(nsamples/ncols))
     fig, axs = plt.subplots(nrows=nrows, ncols=ncols,
                             figsize=(ncols*size,nrows*size))
@@ -240,8 +246,6 @@ def spatialplot(samples, sortkey, allpatches, scores, rgbs=[[1.,0.,0.]],
     for ax, sid in zip(axs.flatten(), sortkey[toplot].sort_values().index[::skipevery]):
         print('.', end='')
         mypatches = allpatches[allpatches.sid == sid]
-        if len(mypatches) < skipthresh:
-            continue
 
         canvas = tds.union_patches_in_sample(mypatches, samples[sid])
         if filterempty:
@@ -264,13 +268,14 @@ def spatialplot(samples, sortkey, allpatches, scores, rgbs=[[1.,0.,0.]],
             sigcanvas[sigcanvas > 1] = 1
             ax.imshow(sigcanvas[nonempty_rows][:,nonempty_cols])
 
-        if highlight is not None:
-            myhighlight = highlight[mypatches.index]
-            mask = tds.union_patches_in_sample(mypatches[myhighlight != 0], samples[sid])
-            boundary = tds.get_boundary(mask.data, outline_rgba, thickness=outline_thickness)
-            ax.imshow(boundary[nonempty_rows][:,nonempty_cols])
+        if highlights is not None:
+            for highlight, outline_rgba in zip(highlights, outline_rgbas):
+                myhighlight = highlight[mypatches.index]
+                mask = tds.union_patches_in_sample(mypatches[myhighlight != 0], samples[sid])
+                boundary = tds.get_boundary(mask.data, outline_rgba, thickness=outline_thickness)
+                ax.imshow(boundary[nonempty_rows][:,nonempty_cols])
         if labels is not None:
-            ax.set_title(labels[sid], color='white', fontsize=12)
+            ax.set_title(labels[sid], color='white', fontsize=label_fontsize)
 
         if stopafter is not None and ax == axs.flatten()[stopafter-1]:
             break
@@ -279,10 +284,7 @@ def spatialplot(samples, sortkey, allpatches, scores, rgbs=[[1.,0.,0.]],
         ax.imshow(np.zeros((10,10)), cmap='grey', vmin=0, vmax=1)
 
     for ax in axs.flatten():
-        ax.spines['top'].set_color('white')
-        ax.spines['bottom'].set_color('white')
-        ax.spines['left'].set_color('white')
-        ax.spines['right'].set_color('white')
+        ax.spines[['top','bottom','left','right']].set_visible(False) # can also do set_color('white')
         ax.set_xticks([])
         ax.set_yticks([])
         ax.xaxis.set_tick_params(length=0)
