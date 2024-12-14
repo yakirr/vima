@@ -136,7 +136,9 @@ def plot_patches_overlaychannels_som(examples, latent, colormaps, nx=5, ny=5, sh
         plt.show()
 
 from scipy.optimize import linear_sum_assignment
-def plot_patches_overlaychannels_linsum(patches, latents, colormaps, nx=5, ny=5, show=True, seed=None, scale_factor=1, spacing=None):
+from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
+def plot_patches_overlaychannels_linsum(patches, latents, colormaps, nx=5, ny=5, show=True, seed=None, scale_factor=1, spacing=None,
+        scalebar=True, scalebar_size=10):
     if nx*ny < len(patches):
         if seed is not None: np.random.seed(seed)
         ix = np.random.choice(len(patches), size=nx*ny, replace=False)
@@ -173,6 +175,11 @@ def plot_patches_overlaychannels_linsum(patches, latents, colormaps, nx=5, ny=5,
     else:
         spacing *= scale_factor
         plt.subplots_adjust(left=spacing/2, right=1-spacing/2, top=1-spacing/2, bottom=spacing/2, wspace=spacing, hspace=spacing)
+
+    if scalebar:
+        scalebar = AnchoredSizeBar(axs[-1,-1].transData,
+            scalebar_size, '', 'lower right', pad=0.2, label_top=True, color='white', frameon=False, size_vertical=2,)
+        axs[-1,-1].add_artist(scalebar)
     
     if show:
         plt.show()
@@ -209,19 +216,23 @@ def plot_patches_fourcolors(examples, nx=5, ny=5,
 
     plot_patches_overlaychannels(examples, colormaps, nx=nx, ny=ny, show=show)
 
-def diff_markers(patch_avgs, pos_set, neg_set, markernames, labels=['T','F'], nmarkers=10, bothends=False, ascending=False, ax=None, show=True, **kwargs):
+def diff_markers(patch_avgs, pos_set, neg_set, markernames, labels=['T','F'], nmarkers=10,
+        bothends=False, ascending=False, sort=True, ax=None, show=True, **kwargs):
     if ax is None:
         ax = plt.gca()
 
     marker_diffs = pd.DataFrame(index=markernames, columns=['diff'])
     for m in markernames:
         marker_diffs.loc[m, 'diff'] = patch_avgs.loc[pos_set, m].median() -  patch_avgs.loc[neg_set, m].median()
-    marker_diffs = marker_diffs.sort_values(by='diff', ascending=ascending)
     
-    if bothends:
-        toplot = np.concatenate([marker_diffs[:nmarkers].index.values, marker_diffs[-nmarkers:].index.values])
+    if sort:
+        marker_diffs = marker_diffs.sort_values(by='diff', ascending=ascending)
+        if bothends:
+            toplot = np.concatenate([marker_diffs[:nmarkers].index.values, marker_diffs[-nmarkers:].index.values])
+        else:
+            toplot = marker_diffs[:nmarkers].index.values
     else:
-        toplot = marker_diffs[:nmarkers].index.values
+        toplot = marker_diffs.index.values
     df = pd.melt(patch_avgs, value_vars=toplot,
                  var_name='marker', value_name='value', ignore_index=False)
     df.loc[pos_set, 'status'] = labels[0]
@@ -236,6 +247,7 @@ def spatialplot(samples, sortkey, allpatches, scores, rgbs=[[1.,0.,0.]],
         labels=None,
         highlights=None, outline_rgbas=None, outline_thickness=10,
         skipthresh=10, skipevery=1, stopafter=None, label_fontsize=12,
+        scalebar=False, scalebar_size=100,
         vmax=1, ncols=5, size=2, filterempty=False, show=True):
     toplot = allpatches[allpatches.sid.isin(samples.keys())].sid.value_counts() > skipthresh
     nsamples = len(sortkey[toplot].sort_values().index[::skipevery])
@@ -276,6 +288,11 @@ def spatialplot(samples, sortkey, allpatches, scores, rgbs=[[1.,0.,0.]],
                 ax.imshow(boundary[nonempty_rows][:,nonempty_cols])
         if labels is not None:
             ax.set_title(labels[sid], color='white', fontsize=label_fontsize)
+
+        if scalebar:
+            scalebar = AnchoredSizeBar(ax.transData,
+                scalebar_size, '', 'lower right', pad=0.2, label_top=True, color='white', frameon=False, size_vertical=2,)
+            ax.add_artist(scalebar)
 
         if stopafter is not None and ax == axs.flatten()[stopafter-1]:
             break
