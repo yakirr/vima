@@ -18,9 +18,11 @@ def seed(seed=0, deterministic=True):
     np.random.seed(seed)
     random.seed(seed)
     if deterministic:
-        torch.use_deterministic_algorithms(True)
+        torch.use_deterministic_algorithms(True, warn_only=False)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+        torch.backends.mps.deterministic = True
+        torch.backends.mps.benchmark = False
 
 def reconstruction_loss(x_true, x_pred : Tensor, per_sample: bool=False):
     x_true, _ = x_true
@@ -69,9 +71,7 @@ def train_one_epoch(model : nn.Module, train_dataset : Dataset,
     for n, batch in enumerate(train_loader):
         # Forward pass
         x, sids = batch
-        noise = 0#0.2 * torch.randn(x.shape[0], x.shape[1]).unsqueeze(-1).unsqueeze(-1).expand(-1, -1, x.shape[2], x.shape[3])
-        predictions, mean, logvar = model.forward([x+noise, sids])
-
+        predictions, mean, logvar = model.forward([x, sids])
         rloss = reconstruction_loss(batch, predictions)
         vaeloss = kl_weight * kl_loss(mean, logvar)
         loss = vaeloss + rloss
@@ -103,7 +103,8 @@ def evaluate(model : nn.Module, eval_dataset : Dataset, batch_size : int=1000,
     eval_loader = DataLoader(
         dataset=eval_dataset,
         batch_size=batch_size,
-        shuffle=False)
+        shuffle=False,
+        generator=torch.Generator(device=torch.get_default_device()))
 
     losses = []; embeddings = []
     with torch.no_grad():
