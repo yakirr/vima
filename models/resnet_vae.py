@@ -21,7 +21,7 @@ class ResnetVAE(VAE):
             of network, 34 layers for default only network and 20 layers for light network. 
     """
 
-    def __init__(self, nsids, network='default', mode='simple', num_layers=18, nlatent=20, ncolors=5, variational=True):
+    def __init__(self, nmarkers, nsids, network='light', mode='advanced', num_layers=18, nlatent=100, variational=True):
         """Initialize the autoencoder.
 
         Args:
@@ -48,11 +48,11 @@ class ResnetVAE(VAE):
             enc = simple_enc if mode == 'simple' else adv_enc
             dec = simple_dec if mode == 'simple' else adv_dec
             if num_layers==18:
-                self.encoder = enc.LightEncoder(ncolors, nsids, nlatent, enc.LightBasicBlockEnc, [2, 2, 2]) 
-                self.decoder = dec.LightDecoder(ncolors, nsids, nlatent, dec.LightBasicBlockDec, [2, 2, 2]) 
+                self.encoder = enc.LightEncoder(nmarkers, nsids, nlatent, enc.LightBasicBlockEnc, [2, 2, 2]) 
+                self.decoder = dec.LightDecoder(nmarkers, nsids, nlatent, dec.LightBasicBlockDec, [2, 2, 2]) 
             elif num_layers==20:
-                self.encoder = enc.LightEncoder(ncolors, nlatent, enc.LightBasicBlockEnc, [3, 3, 3]) 
-                self.decoder = dec.LightDecoder(ncolors, nlatent, dec.LightBasicBlockDec, [3, 3, 3]) 
+                self.encoder = enc.LightEncoder(nmarkers, nlatent, enc.LightBasicBlockEnc, [3, 3, 3]) 
+                self.decoder = dec.LightDecoder(nmarkers, nlatent, dec.LightBasicBlockDec, [3, 3, 3]) 
             else:
                 raise NotImplementedError("Only resnet 18 & 20 autoencoder have been implemented for images size < 64x64.")
         else:

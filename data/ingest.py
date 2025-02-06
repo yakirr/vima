@@ -209,7 +209,6 @@ def metapixels_allsamples(normedpixelsdir, masksdir, sids, plot=True, ncols=8):
     all_npixels = {}
 
     if plot:
-        from IPython.display import display, clear_output
         nrows = int(np.ceil(len(sids)/ncols))
         fig, axs = plt.subplots(nrows, ncols, figsize=(2*ncols,1.5*nrows))
         axs = axs.reshape((nrows, -1))
@@ -225,11 +224,12 @@ def metapixels_allsamples(normedpixelsdir, masksdir, sids, plot=True, ncols=8):
             ax = axs[i // ncols, i % ncols]
             cdf(all_npixels[sid], ax)
             ax.set_title(sid)
-            plt.tight_layout()
-            clear_output(wait=True); display(fig)
         gc.collect()
 
-    if plot: plt.close()
+    if plot:
+        plt.tight_layout()
+        plt.show()
+
     return all_metapixels, all_npixels
 
 def metapixels(s, mask, npixels_thresh=0):
@@ -301,8 +301,10 @@ def harmonize(allpixels_pca, outdir, integrate=['sid']):
     command = ['Rscript', path_to_script, path_to_data] + integrate
     print('Please run the following command in your R environment:')
     print(' '.join(command))
+    print()
+    print('When this finishes, run vi.post_harmony')
 
-def visualize_pixels(pixels, ntoplot, colorby):
+def visualize_pixels(pixels, ntoplot, colorby, include_pca_plot=False):
     pcs = [c for c in pixels.columns if c.startswith('PC')]
     metavars = [c for c in pixels.columns if c not in pcs]
     np.random.seed(0)
@@ -315,10 +317,12 @@ def visualize_pixels(pixels, ntoplot, colorby):
     sc.tl.umap(toplot_ad)
     
     for metavar in colorby:
-        sns.scatterplot(x='PC1', y='PC2', hue=metavar, data=toplot, palette='Set1', s=1, legend=False)
-        plt.show()
-        
+        if include_pca_plot:
+            sns.scatterplot(x='PC1', y='PC2', hue=metavar, data=toplot, palette='Set1', s=1, legend=False)
+            plt.title(metavar)
+            plt.show()
         sc.pl.umap(toplot_ad, color=metavar)
+
     return toplot_ad
 
 def write_harmonized(masksdir, outdir, harmpixels, sids):
@@ -335,3 +339,103 @@ def write_harmonized(masksdir, outdir, harmpixels, sids):
         s.name = sid
         s.to_netcdf(f'{outdir}/{sid}.nc', encoding={s.name: compression}, engine="netcdf4")
         gc.collect()
+
+###########################################
+# user-facing interface
+###########################################
+import glob
+def preprocess(outdir, repname, get_foreground, get_sumstats, normalize,
+                sid_to_covs=None, nmetamarkers=10, plot=False):
+    # prepare directory structure
+    countsdir = f'{outdir}/counts'
+    normeddir = f'{outdir}/normalized'
+    masksdir = f'{outdir}/masks'
+    processeddir = f'{outdir}/{repname}'
+    os.makedirs(normeddir, exist_ok=True)
+    os.makedirs(masksdir, exist_ok=True)
+    os.makedirs(processeddir, exist_ok=True)
+
+    # prepare
+    sids = [f.split('/')[-1].split('.nc')[0]
+        for f in glob.glob(f'{countsdir}/*.nc')]
+    if sid_to_covs is not None:
+        harmony_cov_names = list(sid_to_covs.columns)
+    else:
+        harmony_cov_names = []
+
+    # create and write masks
+    write_masks(countsdir, masksdir, get_foreground, sids, plot=plot)
+
+    # create normalized pixels
+    normalize_allsamples(countsdir, masksdir, normeddir, sids,
+                               get_sumstats=get_sumstats,
+                               normalize=normalize)
+
+    # create metapixels for more accurate PCA
+    metapixels, npixels = metapixels_allsamples(normeddir, masksdir, sids, plot=plot)
+
+    # PCA the metapixels
+    loadings, C, allmp = pca_metapixels(metapixels.values(), nmetamarkers)
+    loadings.to_feather(f'{processeddir}/_pcloadings.feather')
+    del metapixels, allmp; gc.collect()
+
+    # apply the PC loadings to plain pixels
+    allpixels_pca = pca_pixels(normeddir, masksdir, loadings, sids)
+    
+    for cov_name in harmony_cov_names:
+        allpixels_pca[cov_name] = allpixels_pca['sid'].map(sid_to_covs[cov_name])
+    allpixels_pca.to_feather(f'{processeddir}/_allpixels_pca.feather')
+
+    # prompt user to run harmony
+    harmonize(allpixels_pca, processeddir, integrate=['sid'] + harmony_cov_names)
+
+def post_harmony(outdir, repname, sid_to_covs=None, plot=True):
+    masksdir = f'{outdir}/masks'
+    processeddir = f'{outdir}/{repname}'
+    sids = [f.split('/')[-1].split('.nc')[0]
+        for f in glob.glob(f'{masksdir}/*.nc')]
+    if sid_to_covs is not None:
+        harmony_cov_names = list(sid_to_covs.columns)
+    else:
+        harmony_cov_names = []
+
+    # read in harmonized pixels, visualize, and write
+    harmpixels = pd.read_feather(f'{processeddir}/_allpixels_pca_harmony.feather')
+    if plot:
+        viz = visualize_pixels(harmpixels, 50000, ['sid'] + harmony_cov_names)
+    write_harmonized(masksdir, processeddir, harmpixels, sids)
+
+def sanity_checks(outdir, repname, sid_to_covs=None):
+    processeddir = f'{outdir}/{repname}'
+    sids = [f.split('/')[-1].split('.nc')[0]
+        for f in glob.glob(f'{processeddir}/*.nc')]
+    if sid_to_covs is not None:
+        harmony_cov_names = list(sid_to_covs.columns)
+    else:
+        harmony_cov_names = []
+
+    print('all PCs of one sample')
+    s = xr.open_dataarray(f'{processeddir}/{sids[0]}.nc').astype(np.float32)
+    s.plot(col='marker', col_wrap=5, vmin=-10, vmax=10, cmap='seismic')
+
+    print('histogram of each pc')
+    harmpixels = pd.read_feather(f'{processeddir}/_allpixels_pca_harmony.feather')
+    nmms = harmpixels.values.shape[1] - len(harmony_cov_names) - 1 # the -1 accounts for sid
+    plt.figure(figsize=(3*4, 2*int(np.ceil(nmms/4))))
+    for i in range(nmms):
+        print(i, end='')
+        plt.subplot(int(np.ceil(nmms/4)), 4, i+1)
+        plt.hist(harmpixels.values[:,i], bins=1000)
+    plt.tight_layout()
+    plt.show()
+
+    print('PC1 of several samples')
+    fig, axs = plt.subplots(len(sids[::5])//5 + 1, 5, figsize=(16, 4*(len(sids[::5])//5 + 1)))
+    for sid, ax in zip(sids[::3], axs.flatten()):
+        s = xr.open_dataarray(f'{processeddir}/{sid}.nc').astype(np.float32)
+        vmax = np.percentile(np.abs(s.sel(marker='hPC1').data), 99)
+        s.sel(marker='hPC1').plot(ax=ax, cmap='seismic', vmin=-vmax, vmax=vmax, add_colorbar=False)
+        ax.set_title(sid)
+        gc.collect()
+    plt.tight_layout()
+    plt.show()

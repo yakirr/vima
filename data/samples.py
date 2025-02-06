@@ -30,32 +30,6 @@ def read_samples(files, filename_parser, stop_after=None):
 def get_mask(s):
     return (s!=0).any(dim='marker')
 
-def choose_patches(samples, patchsize, patchstride, max_frac_empty=0.2):
-    patch_meta = []
-
-    for s in pb(samples.values()):
-        mask = get_mask(s)
-        starts = np.array([
-            [i, j]
-            for i in range(0, mask.sizes['x']-patchsize, patchstride)
-            for j in range(0, mask.sizes['y']-patchsize, patchstride)
-            if mask.data[j:j+patchsize, i:i+patchsize].mean() > (1-max_frac_empty)
-        ]).astype('int')
-
-        patch_meta.append(pd.DataFrame([
-                (s.sid, s.donor, i, j, mask.x[i], mask.y[j])
-                for i, j in starts
-            ],
-            columns=['sid','donor','x','y', 'x_microns', 'y_microns'],
-        ))
-    patch_meta = pd.concat(patch_meta, axis=0).reset_index(drop=True)
-    patch_meta.x = patch_meta.x.astype('int')
-    patch_meta.y = patch_meta.y.astype('int')
-    patch_meta.x_microns = patch_meta.x_microns.astype('float32')
-    patch_meta.y_microns = patch_meta.y_microns.astype('float32')
-    patch_meta['patchsize'] = patchsize
-    return patch_meta
-
 def union_patches_in_sample(patchmeta, s):
     res = s[:,:,0].copy()
     res[:,:] = 0

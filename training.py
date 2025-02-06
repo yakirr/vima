@@ -187,3 +187,13 @@ def train_test_split(P, breakdown=[0.8,0.2]):
     P.pytorch_mode()
     P.augmentation_on()
     return torch.utils.data.random_split(P, breakdown, generator=torch.Generator(device=torch.get_default_device()))
+
+def train(model, P, seed=0, kl_weight=1e-5, batch_size=256, n_epochs=20, lr=1e-3, gamma=0.9):
+    train_dataset, val_dataset = train_test_split(P)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)
+    model, losslogs = full_training(model, train_dataset, val_dataset, optimizer, scheduler,
+                                    batch_size=256, n_epochs=20,
+                                    kl_weight=kl_weight,
+                                    per_epoch_logging=detailed_per_epoch_logging,
+                                    per_epoch_kwargs={'Pmin':P.vmin, 'Pmax':P.vmax})
