@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import random
 import torch
-from . import samples as tds
+from . import samples as vds
 from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 
@@ -21,14 +21,50 @@ class RandomDiscreteRotation:
         return x
 
 class PatchCollection(Dataset):
-    def __init__(self, patchmeta, samples, sid_nums=None, standardize=True, percentile_thresh=99):
+    @staticmethod
+    def choose_patches(samples, patchsize, patchstride, max_frac_empty):
+        patchmeta = []
+
+        for s in pb(samples.values()):
+            mask = vds.get_mask(s)
+            starts = np.array([
+                [i, j]
+                for i in range(0, mask.sizes['x']-patchsize, patchstride)
+                for j in range(0, mask.sizes['y']-patchsize, patchstride)
+                if mask.data[j:j+patchsize, i:i+patchsize].mean() > (1-max_frac_empty)
+            ]).astype('int')
+
+            patchmeta.append(pd.DataFrame([
+                    (s.sid, s.donor, i, j, mask.x[i], mask.y[j])
+                    for i, j in starts
+                ],
+                columns=['sid','donor','x','y', 'x_microns', 'y_microns'],
+            ))
+        patchmeta = pd.concat(patchmeta, axis=0).reset_index(drop=True)
+        patchmeta.x = patchmeta.x.astype('int')
+        patchmeta.y = patchmeta.y.astype('int')
+        patchmeta.x_microns = patchmeta.x_microns.astype('float32')
+        patchmeta.y_microns = patchmeta.y_microns.astype('float32')
+        patchmeta['patchsize'] = patchsize
+        return patchmeta
+
+    def __init__(self, samples, patchsize=40, patchstride=10, max_frac_empty=0.8,
+                sid_nums=None, standardize=True, percentile_thresh=99):
         self.samples = samples
-        self.meta = patchmeta
-        self.nchannels = next(iter(samples.values())).sizes['marker']
+        self.meta = PatchCollection.choose_patches(samples, patchsize, patchstride, max_frac_empty)
+        self.nmarkers = next(iter(samples.values())).sizes['marker']
 
         self.pytorch_mode()
         self.__preprocess__(standardize, percentile_thresh, sid_nums=sid_nums)
         self.augmentation_off()
+
+    @property
+    def sid_nums(self):
+        return {sid:sid_num for sid, sid_num in self.meta[['sid','sid_num']].drop_duplicates().values}
+
+    @property
+    def nsamples(self):
+        return len(self.meta.sid.unique())
 
     def augmentation_on(self):
         if self.dim_order != 'pytorch':
