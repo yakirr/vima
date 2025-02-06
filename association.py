@@ -56,7 +56,7 @@ def latentrep(model, P, samplemeta):
                 samplemeta[samplemeta.index.isin(P.meta.sid.unique())],
                 sampleid='sid')
 
-def association(d, pheno, fdr=0.1, force_recompute=True, covs=None, Nnull=10000, seed=0, **kwargs):
+def association(d, pheno, fdr=0.1, force_recompute=True, covs=None, Nnull=100000, seed=0, **kwargs):
     if seed is not None: np.random.seed(seed)
     cna.tl.nam(d, force_recompute=force_recompute)
     d.samplem['case'] = pheno
