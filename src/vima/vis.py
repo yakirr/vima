@@ -1,8 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from minisom import MiniSom
 import scanpy as sc
-from sklearn.preprocessing import scale
 import cv2
 import torch
 import xarray as xr
@@ -97,43 +95,6 @@ def plot_patches_overlaychannels(examples, colormaps, nx=5, ny=5, show=True, see
     if show:
         plt.show()
     return ix
-
-# colormaps consists of tuples of the form [channel, color, scaler]
-def plot_patches_overlaychannels_som(examples, latent, colormaps, nx=5, ny=5, show=True, seed=None, scale_factor=1, spacing=None,
-        subsamplefactor=None):
-    if seed is not None: np.random.seed(seed)
-    if subsamplefactor is not None:
-        ix = np.random.choice(range(len(examples)), size=int(subsamplefactor*nx*ny), replace=False)
-        examples = examples[ix]
-        latent = latent[ix]
-
-    som = MiniSom(nx, ny, len(latent[0]),
-              neighborhood_function='gaussian', sigma=1.5,
-              random_seed=1)
-    latent = scale(latent)
-    som.pca_weights_init(latent)
-    som.train_random(latent, 1000, verbose=False)
-    map = som.labels_map(latent, range(len(latent)))
-    
-    fig, axs = plt.subplots(nx, ny,
-        figsize=(scale_factor*nx,scale_factor*ny))
-    for p, box in map.items():
-        box = list(box)
-        c = np.random.choice(box, size=1)[0]
-        image = apply_colormap(examples[c], colormaps)
-        ax = axs[p[0],p[1]]
-        ax.imshow(image)
-    for ax in axs.flatten():
-        ax.axis('off')
-        
-    if spacing is None:
-        plt.tight_layout()
-    else:
-        spacing *= scale_factor
-        plt.subplots_adjust(left=spacing/2, right=1-spacing/2, top=1-spacing/2, bottom=spacing/2, wspace=spacing, hspace=spacing)
-    
-    if show:
-        plt.show()
 
 from scipy.optimize import linear_sum_assignment
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
