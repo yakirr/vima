@@ -6,7 +6,9 @@ To use `vima`, you can either install it directly from the [Python Package Index
 
 `pip install vima-spatial`
 
-or if you'd like to manipulate the source code you can clone this repository and add it to your `PYTHONPATH`. Please note that the package requires a working installation of `pytorch`.
+or if you'd like to manipulate the source code you can clone this repository and add it to your `PYTHONPATH`.
+
+Note that the package requires a working installation of `pytorch`, and it may be beneficial to first install `pytorch`, verify it works properly, and then install `vima`. For data preprocessing the current version of the package also requires a working `R` environment with the [`harmony` package](https://github.com/immunogenomics/harmony) installed.
 
 ## demo
 Coming soon!
