@@ -8,7 +8,7 @@ To use `vima`, you can either install it directly from the [Python Package Index
 
 or if you'd like to manipulate the source code you can clone this repository and add it to your `PYTHONPATH`.
 
-Note that the package requires a working installation of `pytorch`, and it may be beneficial to first install `pytorch`, verify it works properly, and then install `vima`. For data preprocessing the current version of the package also requires a working `R` environment with the [`harmony` package](https://github.com/immunogenomics/harmony) installed.
+Note that the package requires `python` version 3.12.3 or greater and a working installation of `pytorch`. It may be beneficial to first install `pytorch`, verify it works properly, and only then install `vima`. For data preprocessing the current version of the package also requires a working `R` environment with the [`harmony` package](https://github.com/immunogenomics/harmony) installed.
 
 ## demo
 Take a look at our [demo](https://github.com/yakirr/vima/blob/main/demo/demo.ipynb) to see how to get started with an example analysis.
