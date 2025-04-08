@@ -1,6 +1,8 @@
 library(harmony)
 library(arrow)
 
+set.seed(0)
+
 args <- commandArgs(trailingOnly=TRUE)
 infile = args[1]
 metadata_names = args[2:length(args)]
