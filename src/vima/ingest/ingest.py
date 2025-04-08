@@ -134,12 +134,12 @@ def foreground_mask_codex(s, real_markers, neg_ctrls, blur_width=5):
 
 def write_masks(pixelsdir, outdir, get_foreground, sids, plot=True, vmax=30):
     for sid in sids:
-        print('reading', sid)
+        print(sid, end=': ')
         s = xr.load_dataarray(f'{pixelsdir}/{sid}.nc').astype(np.float32)
         
         # make mask and save
         mask = get_foreground(s)
-        print(f'{mask.values.sum()} of {mask.shape[0]*mask.shape[1]} ({100*mask.values.sum()/(mask.shape[0]*mask.shape[1]):.0f}%) pixels are non-empty')
+        print(f'{mask.values.sum()} ({100*mask.values.sum()/(mask.shape[0]*mask.shape[1]):.0f}%) pixels non-empty', end='| ')
         mask.to_netcdf(f'{outdir}/{sid}.nc', encoding={mask.name: compression}, engine="netcdf4")
 
         if plot:
@@ -153,6 +153,29 @@ def write_masks(pixelsdir, outdir, get_foreground, sids, plot=True, vmax=30):
             plt.show()
         
         gc.collect()
+
+def get_sumstats_nonst(norm, pixels):
+    pixels = norm(pixels)[1]
+    ntranscripts = pixels.sum(axis=1, dtype=np.float64)
+    med_ntranscripts = np.median(ntranscripts)
+    pixels = np.log1p(med_ntranscripts * pixels / (ntranscripts[:,None] + 1e-6)) # adding to denominator in case pixel is all 0s
+    means = pixels.mean(axis=0, dtype=np.float64)
+    stds = pixels.std(axis=0, dtype=np.float64)
+    return {'means':means, 'stds':stds, 'med_ntranscripts':med_ntranscripts}
+
+def normalize_nonst(norm, mask, s, med_ntranscripts=None, means=None, stds=None):
+    s = s.where(mask, other=0)
+    pl = xr_to_pixellist(s, mask)
+    markers_to_keep, pl = norm(pl)
+    pl = np.log1p(med_ntranscripts * pl / (pl.sum(axis=1)[:,None] + 1e-6)) # adding to denominator in case pixel is all 0s
+    pl -= means
+    pl /= stds
+    s = s.sel(marker=markers_to_keep)
+    set_pixels(s, mask, pl)
+    s.attrs['med_ntranscripts'] = med_ntranscripts
+    s.attrs['means'] = means
+    s.attrs['stds'] = stds
+    return s
 
 def get_sumstats_st(pixels):
     ntranscripts = pixels.sum(axis=1, dtype=np.float64)
@@ -175,7 +198,7 @@ def normalize_st(mask, s, med_ntranscripts=None, means=None, stds=None):
     return s
 
 def normalize_allsamples(pixelsdir, masksdir, outdir, sids, get_sumstats=get_sumstats_st, normalize=normalize_st):
-    print('reading all non-empty pixels')
+    print('\nreading all non-empty pixels')
     pixels = np.concatenate([
         xr_to_pixellist(
             xr.open_dataarray(f'{pixelsdir}/{sid}.nc').astype(np.float32),
@@ -213,8 +236,8 @@ def metapixels_allsamples(normedpixelsdir, masksdir, sids, plot=True, ncols=8):
         fig, axs = plt.subplots(nrows, ncols, figsize=(2*ncols,1.5*nrows))
         axs = axs.reshape((nrows, -1))
 
-    for i, sid in enumerate(sids):
-        print('.', end='')
+    print('creating metapixels prior to PCA')
+    for i, sid in pb(enumerate(sids)):
         all_metapixels[sid], all_npixels[sid] = metapixels(
             xr.open_dataarray(f'{normedpixelsdir}/{sid}.nc').astype(np.float32),
             xr.open_dataarray(f'{masksdir}/{sid}.nc'))
@@ -261,8 +284,6 @@ def pca_metapixels(mps, k, plot=True):
     loadings = pd.DataFrame(data=allmp.varm['PCs'], columns=[f'PC{i}' for i in range(1,k+1)], index=allmp.var_names)
 
     if plot:
-        plt.imshow(C, cmap='seismic', vmin=-1, vmax=1)
-        plt.show()
         plt.figure(figsize=(30,2))
         plt.imshow(loadings.T, cmap='seismic', vmin=-0.5, vmax=0.5)
         plt.xticks(range(len(loadings)), loadings.index, rotation=90)
@@ -291,20 +312,11 @@ def pca_pixels(normedixelsdir, masksdir, pcloadings, sids, plot=True, npixels_to
 
     if plot:
         print('visualizing')
-        visualize_pixels(allpixels_pca, npixels_to_plot, colorby)
+        visualize_pixels(allpixels_pca, npixels_to_plot, 'metamarkers', colorby)
 
     return allpixels_pca
 
-def harmonize(allpixels_pca, outdir, integrate=['sid']):
-    path_to_data = os.path.abspath(f'{outdir}/_allpixels_pca.feather')
-    path_to_script = os.path.dirname(__file__) + '/harmonize.R'
-    command = ['Rscript', path_to_script, path_to_data] + integrate
-    print('Please run the following command in your R environment:')
-    print(' '.join(command))
-    print()
-    print('When this finishes, run vi.post_harmony')
-
-def visualize_pixels(pixels, ntoplot, colorby, include_pca_plot=False):
+def visualize_pixels(pixels, ntoplot, input, colorby, include_pca_plot=False):
     pcs = [c for c in pixels.columns if c.startswith('PC')]
     metavars = [c for c in pixels.columns if c not in pcs]
     np.random.seed(0)
@@ -321,31 +333,19 @@ def visualize_pixels(pixels, ntoplot, colorby, include_pca_plot=False):
             sns.scatterplot(x='PC1', y='PC2', hue=metavar, data=toplot, palette='Set1', s=1, legend=False)
             plt.title(metavar)
             plt.show()
-        sc.pl.umap(toplot_ad, color=metavar)
+        sc.pl.umap(toplot_ad, color=metavar, legend_loc=None,
+                   title=f'pixels UMAPed using {input}, colored by {metavar}')
 
     return toplot_ad
-
-def write_harmonized(masksdir, outdir, harmpixels, sids):
-    pcs = [c for c in harmpixels.columns if c.startswith('PC')]
-    hpcs = ['h'+c for c in pcs]
-    for sid in pb(sids):
-        mask = xr.open_dataarray(f'{masksdir}/{sid}.nc')
-        pl = harmpixels[harmpixels.sid == sid]
-        s_ = np.zeros((*mask.shape, len(hpcs)))
-        s_[mask.data] = pl[pcs].values
-        s = xr.DataArray(s_,
-             dims=['y', 'x', 'marker'],
-             coords={'x': mask.x, 'y': mask.y, 'marker': hpcs})
-        s.name = sid
-        s.to_netcdf(f'{outdir}/{sid}.nc', encoding={s.name: compression}, engine="netcdf4")
-        gc.collect()
 
 ###########################################
 # user-facing interface
 ###########################################
 import glob
+import tempfile
+
 def preprocess(outdir, repname, get_foreground, get_sumstats, normalize,
-                sid_to_covs=None, nmetamarkers=10, plot=False):
+                nmetamarkers=10, plot=False):
     # prepare directory structure
     countsdir = f'{outdir}/counts'
     normeddir = f'{outdir}/normalized'
@@ -358,10 +358,6 @@ def preprocess(outdir, repname, get_foreground, get_sumstats, normalize,
     # prepare
     sids = [f.split('/')[-1].split('.nc')[0]
         for f in glob.glob(f'{countsdir}/*.nc')]
-    if sid_to_covs is not None:
-        harmony_cov_names = list(sid_to_covs.columns)
-    else:
-        harmony_cov_names = []
 
     # create and write masks
     write_masks(countsdir, masksdir, get_foreground, sids, plot=plot)
@@ -380,30 +376,57 @@ def preprocess(outdir, repname, get_foreground, get_sumstats, normalize,
     del metapixels, allmp; gc.collect()
 
     # apply the PC loadings to plain pixels
-    allpixels_pca = pca_pixels(normeddir, masksdir, loadings, sids)
-    
-    for cov_name in harmony_cov_names:
-        allpixels_pca[cov_name] = allpixels_pca['sid'].map(sid_to_covs[cov_name])
-    allpixels_pca.to_feather(f'{processeddir}/_allpixels_pca.feather')
+    return pca_pixels(normeddir, masksdir, loadings, sids)    
 
-    # prompt user to run harmony
-    harmonize(allpixels_pca, processeddir, integrate=['sid'] + harmony_cov_names)
-
-def post_harmony(outdir, repname, sid_to_covs=None, plot=True):
-    masksdir = f'{outdir}/masks'
-    processeddir = f'{outdir}/{repname}'
-    sids = [f.split('/')[-1].split('.nc')[0]
-        for f in glob.glob(f'{masksdir}/*.nc')]
+def harmonize(allpixels_pca, path_to_Rscript, sid_to_covs=None, plot=True):
+    # add covariates
     if sid_to_covs is not None:
         harmony_cov_names = list(sid_to_covs.columns)
     else:
         harmony_cov_names = []
-
-    # read in harmonized pixels, visualize, and write
-    harmpixels = pd.read_feather(f'{processeddir}/_allpixels_pca_harmony.feather')
+    for cov_name in harmony_cov_names:
+        allpixels_pca[cov_name] = allpixels_pca['sid'].map(sid_to_covs[cov_name])
+    harmony_cov_names = ['sid'] + harmony_cov_names
+    
+    # write out the data
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".feather") as temp_file:
+        allpixels_pca.to_feather(temp_file.name)
+    
+    # run harmony script
+    path_to_script = os.path.dirname(__file__) + '/harmonize.R'
+    command = [path_to_Rscript, path_to_script, temp_file.name] + harmony_cov_names
+    try:
+        print('=== running harmony ===')
+        subprocess.run(command, check=True)
+        print('=== finished running harmony ===')
+    except subprocess.CalledProcessError as e:
+        print(f"Error running harmony: {e}")
+        return None
+    
+    # collect output of harmony script and visualize
+    base, ext = os.path.splitext(temp_file.name)
+    harmpixels = pd.read_feather(f"{base}_harmony{ext}")
     if plot:
-        viz = visualize_pixels(harmpixels, 50000, ['sid'] + harmony_cov_names)
-    write_harmonized(masksdir, processeddir, harmpixels, sids)
+        visualize_pixels(harmpixels, 50000, 'harm. metamarkers', harmony_cov_names)
+    
+    return harmpixels
+
+def write_harmonized(outdir, repname, harmpixels):
+    masksdir = f'{outdir}/masks'
+    processeddir = f'{outdir}/{repname}'
+    pcs = [c for c in harmpixels.columns if c.startswith('PC')]
+    hpcs = ['h'+c for c in pcs]
+    for sid in pb(harmpixels.sid.unique()):
+        mask = xr.open_dataarray(f'{masksdir}/{sid}.nc')
+        pl = harmpixels[harmpixels.sid == sid]
+        s_ = np.zeros((*mask.shape, len(hpcs)))
+        s_[mask.data] = pl[pcs].values
+        s = xr.DataArray(s_,
+             dims=['y', 'x', 'marker'],
+             coords={'x': mask.x, 'y': mask.y, 'marker': hpcs})
+        s.name = sid
+        s.to_netcdf(f'{processeddir}/{sid}.nc', encoding={s.name: compression}, engine="netcdf4")
+        gc.collect()
 
 def sanity_checks(outdir, repname, sid_to_covs=None):
     processeddir = f'{outdir}/{repname}'
