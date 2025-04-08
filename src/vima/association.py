@@ -19,33 +19,31 @@ def anndata(patchmeta, Z, var_names=None, use_rep='X', n_comps=10):
 
     print('running UMAP')
     sc.pp.neighbors(d, use_rep=use_rep)
-    sc.tl.umap(d)
+    sc.tl.umap(d, random_state=0)
     print(f'done')
 
     return d
 
-def apply(model, P, embedding=None, batch_size=1000):
-    if embedding is None:
-        embedding = model.embedding
-
+def apply(models, P, batch_size=1000):
     P.pytorch_mode()
     P.augmentation_off()
-    model.eval()
     eval_loader = DataLoader(
         dataset=P,
         batch_size=batch_size,
         shuffle=False)
 
-    Z = []
+    Zs = {modelid: [] for modelid in range(len(models))}
     with torch.no_grad():
         for batch in pb(eval_loader):
-            Z.append(embedding(batch).detach().cpu().numpy())
+            for modelid, model in enumerate(models):
+                Zs[modelid].append(model.embedding(batch).detach().cpu().numpy())
 
-    return np.concatenate(Z)
+    return np.concatenate([
+        np.concatenate(Z) for Z in Zs.values()], axis=1)
 
-def latentrep(model, P):
+def latentrep(models, P):
     return anndata(P.meta,
-                apply(model, P))
+                apply(models, P), use_rep='X_pca', n_comps=100)
 
 def association(d, y, sid_name, batches=None, covs=None, donorids=None, key_added='mncoef',
                 return_full=False, Nnull=10000, fdr=0.1, seed=0, **kwargs):
