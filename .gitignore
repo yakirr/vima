@@ -388,3 +388,10 @@ demo/RA/pca_k=5_harmony/300-1933_Scan2.nc
 demo/RA/pca_k=5_harmony/300-1934_Scan3.nc
 demo/RA/pca_k=5_harmony/300-2660_Scan1.nc
 demo/RA/pca_k=5_harmony/300-2665_Scan1.nc
+demo/RA/.__results
+demo/RA/._counts
+demo/RA/._masks
+demo/RA/._metadata.csv
+demo/RA/._normalized
+demo/RA/._pca_k=5_harmony
+demo/._RA
