@@ -29,7 +29,7 @@ class ResnetVAE(VAE):
              num_layers (int): the number of layers to be created. Choices [18 (default), 34 (only for 
                 'default' network), 20 (only for 'light' network).
         """
-        super().__init__()
+        super().__init__()        
         self.variational = variational
         self.network = network
         self.mode = mode
