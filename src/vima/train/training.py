@@ -7,6 +7,8 @@ import torch.nn.functional as F
 import random, time, os
 import pandas as pd
 from tempfile import TemporaryDirectory
+
+from vima.data.patchcollection import PatchCollection
 from .logging import LossLogger
 from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
@@ -101,9 +103,11 @@ def evaluate(model : nn.Module, eval_dataset : Dataset, kl_weight : float,
 
 def full_training(models : list[nn.Module], train_dataset : Dataset,
         val_dataset : Dataset, optimizers : list[torch.optim.Optimizer],
-        schedulers : list[LRScheduler], log : LossLogger, batch_size : int=128, n_epochs : int=10,
-        kl_weight : float=1, kl_warmup : bool=False,):
+        schedulers : list[LRScheduler], P : PatchCollection, log : LossLogger,
+        batch_size : int=128, n_epochs : int=10,
+        kl_weight : float=1, kl_warmup : bool=True, stop_augmentation : float=1):
     best_val_losses = [float('inf') for model in models]
+    best_epoch = [-1 for i in range(len(models))]
 
     with TemporaryDirectory() as tempdir:
         best_model_params_paths = [
@@ -112,20 +116,26 @@ def full_training(models : list[nn.Module], train_dataset : Dataset,
         ]
 
         for epoch in range(1, n_epochs + 1):
+            if epoch > stop_augmentation * n_epochs:
+                P.augmentation_off()
+
             train_one_epoch(
                 models, train_dataset, optimizers, schedulers, batch_size, log,
-                    kl_weight=kl_weight if kl_warmup else kl_weight * min((epoch-0) / 5, 1))
+                    kl_weight=kl_weight * min(epoch / 5, 1) if kl_warmup else kl_weight)
             
             for modelid, (model, scheduler, best_path) in enumerate(zip(models, schedulers, best_model_params_paths)):
                 rlosses, kllosses, _ = evaluate(model, val_dataset, kl_weight,
                     detailed=True, subset=range(0, len(val_dataset), max(1, len(val_dataset)//2000)))
                 scheduler.step()
-                log.log_epoch(modelid, rlosses + kllosses, rlosses, kllosses, model, val_dataset)
+                log.log_epoch(modelid, rlosses + kllosses, rlosses, kllosses, models, val_dataset)
 
                 total_loss = rlosses.mean() + kllosses.mean()
                 if total_loss < best_val_losses[modelid]:
                     best_val_losses[modelid] = total_loss
+                    best_epoch[modelid] = epoch
                     torch.save(model.state_dict(), best_path)
+            print('best validation losses so far across full model ensemble:', best_val_losses)
+            print('best epochs so far across full model ensemble:', best_epoch)
 
         for model, best_path in zip(models, best_model_params_paths):
             model.load_state_dict(torch.load(best_path)) # load best model states
@@ -135,15 +145,19 @@ def train_test_split(P, breakdown=[0.8,0.2]):
     P.augmentation_on()
     return torch.utils.data.random_split(P, breakdown, generator=torch.Generator(device=torch.get_default_device()))
 
-def train(models, P, kl_weight=1e-5, batch_size=256, n_epochs=20, lr=1e-3, gamma=0.9,
-          plot_reconstructions=False):
+def train(models, P, kl_weight=1e-5, kl_warmup=True, stop_augmentation=1,
+          batch_size=256, n_epochs=20, lr=1e-3, gamma=0.9,
+          plot_reconstructions=False, on_epoch_end=None):
     train_dataset, val_dataset = train_test_split(P)
     optimizers = [torch.optim.AdamW(model.parameters(), lr=lr) for model in models]
     schedulers = [torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma) for optimizer in optimizers]
-    log = LossLogger(log_interval=20, detailed=plot_reconstructions, Pmin=P.vmin, Pmax=P.vmax)
+    log = LossLogger(log_interval=20, detailed=plot_reconstructions,
+                     Pmin=P.vmin, Pmax=P.vmax,
+                     on_epoch_end=on_epoch_end)
     
-    full_training(models, train_dataset, val_dataset, optimizers, schedulers, log,
+    full_training(models, train_dataset, val_dataset, optimizers, schedulers, P, log,
                                     batch_size=batch_size, n_epochs=n_epochs,
-                                    kl_weight=kl_weight)
+                                    kl_weight=kl_weight, kl_warmup=kl_warmup,
+                                    stop_augmentation=stop_augmentation)
     
     return log

@@ -356,8 +356,8 @@ def preprocess(outdir, repname, get_foreground, get_sumstats, normalize,
     os.makedirs(processeddir, exist_ok=True)
 
     # prepare
-    sids = [f.split('/')[-1].split('.nc')[0]
-        for f in glob.glob(f'{countsdir}/*.nc')]
+    sids = [os.path.splitext(f)[0]
+        for f in os.listdir(countsdir) if f.endswith('.nc')]
 
     # create and write masks
     write_masks(countsdir, masksdir, get_foreground, sids, plot=plot)
@@ -430,8 +430,8 @@ def write_harmonized(outdir, repname, harmpixels):
 
 def sanity_checks(outdir, repname, sid_to_covs=None):
     processeddir = f'{outdir}/{repname}'
-    sids = [f.split('/')[-1].split('.nc')[0]
-        for f in glob.glob(f'{processeddir}/*.nc')]
+    sids = [os.path.splitext(f)[0]
+        for f in os.listdir(processeddir) if f.endswith('.nc')]
     if sid_to_covs is not None:
         harmony_cov_names = list(sid_to_covs.columns)
     else:

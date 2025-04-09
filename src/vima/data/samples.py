@@ -1,4 +1,5 @@
 import glob
+import os
 import numpy as np
 import xarray as xr
 import pandas as pd
@@ -8,7 +9,7 @@ from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 
 def default_parser(fname):
-    fname = fname.split('/')[-1].split('.nc')[0]
+    fname = os.path.splitext(os.path.basename(fname))[0]
     return {
         'donor': fname.split('_')[0],
         'sid': fname.split('_')[1]
