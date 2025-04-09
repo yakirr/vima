@@ -27,6 +27,9 @@ def anndata(patchmeta, Z, var_names=None, use_rep='X', n_comps=10):
 def apply(models, P, batch_size=1000):
     P.pytorch_mode()
     P.augmentation_off()
+    for model in models:
+        model.eval()
+    
     eval_loader = DataLoader(
         dataset=P,
         batch_size=batch_size,
@@ -43,7 +46,8 @@ def apply(models, P, batch_size=1000):
 
 def latentrep(models, P):
     return anndata(P.meta,
-                apply(models, P), use_rep='X_pca', n_comps=100)
+                apply(models, P),
+                use_rep='X_pca', n_comps=100)
 
 def association(d, y, sid_name, batches=None, covs=None, donorids=None, key_added='mncoef',
                 return_full=False, Nnull=10000, fdr=0.1, seed=0, **kwargs):

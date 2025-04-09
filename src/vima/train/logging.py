@@ -6,10 +6,11 @@ from IPython import display
 from .. import vis as v
 
 class LossLogger:
-    def __init__(self, log_interval=20, detailed=True, Pmin=None, Pmax=None):
+    def __init__(self, log_interval=20, detailed=True, Pmin=None, Pmax=None, on_epoch_end=None):
         self.log_interval = log_interval
         self.detailed = detailed
         self.Pmin = Pmin; self.Pmax = Pmax
+        self.on_epoch_end = on_epoch_end
         self.reset()
 
     def reset(self):
@@ -69,7 +70,7 @@ class LossLogger:
                 f'kl-weight {kl_weight:.2e} | '
                 f'time {time_per_batch:.2f} sec')
 
-    def log_epoch(self, modelid, vlosses, vrlosses, vkllosses, model, val_dataset):
+    def log_epoch(self, modelid, vlosses, vrlosses, vkllosses, models, val_dataset):
         """Log validation loss."""
         i = np.where(np.array(self.modelids) == modelid)[0][-1]
         self.val_losses[i] = vlosses.mean()
@@ -77,10 +78,12 @@ class LossLogger:
         self.val_kllosses[i] = vkllosses.mean()
 
         if modelid == self.nmodels - 1:
-            self.print_epoch_log(vrlosses, model, val_dataset)
+            self.print_epoch_log(vrlosses, models, val_dataset)
+            if self.on_epoch_end is not None:
+                self.on_epoch_end(self.epoch, models, val_dataset)
             self.epoch = self.epoch + 1
 
-    def print_epoch_log(self, vrlosses, model, val_dataset):
+    def print_epoch_log(self, vrlosses, models, val_dataset):
         display.clear_output()
         print(f'end of epoch {self.epoch}: avg val loss = {np.array(self.val_losses)[-self.nmodels:].mean()}')
         print(f'time elapsed this epoch: {time.time() - self.epochstarttime:.2f} sec')
@@ -108,7 +111,7 @@ class LossLogger:
             ix = np.argsort(vrlosses)
             examples = val_dataset[list(ix[::len(ix)//12])]
             examples = (examples[0].permute(0,2,3,1), examples[1])
-            v.plot_with_reconstruction(model, examples, channels=range(examples[0].shape[-1]),
+            v.plot_with_reconstruction(models[0], examples, channels=range(examples[0].shape[-1]),
                                         pmin=self.Pmin, pmax=self.Pmax)
 
     @property
