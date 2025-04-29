@@ -44,10 +44,10 @@ def apply(models, P, batch_size=1000):
     return np.concatenate([
         np.concatenate(Z) for Z in Zs.values()], axis=1)
 
-def latentrep(models, P):
+def latentrep(models, P, use_rep='X_pca', n_comps=100):
     return anndata(P.meta,
                 apply(models, P),
-                use_rep='X_pca', n_comps=100)
+                use_rep=use_rep, n_comps=n_comps)
 
 def association(d, y, sid_name, batches=None, covs=None, donorids=None, key_added='mncoef',
                 return_full=False, Nnull=10000, fdr=0.1, seed=0, **kwargs):
