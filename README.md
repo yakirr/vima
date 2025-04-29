@@ -14,5 +14,6 @@ Note that the package requires a working installation of `pytorch`, and it may b
 Take a look at our [demo](https://github.com/yakirr/vima/blob/main/demo/demo_IHC.ipynb) to see how to get started with an example analysis. We plan to put up demos for other data modalities in the future.
 
 ## citation
-If you use `vima` please reference our pre-print:
-Reshef, Y., Sood, L., Curtis, M., Rumker, L., Stein, D. J., Palshikar, M. G., Nayar, S., Filer, A., Jonsson, A. H., Korsunsky, I., & Raychaudhuri, S. "Powerful and accurate case-control analysis of spatial molecular data with deep learning-defined tissue microniches." bioRxiv. https://doi.org/10.1101/2025.02.07.637149
+If you use `vima`, please cite:
+
+[Y. Reshef, et al. Powerful and accurate case-control analysis of spatial molecular data with deep learning-defined tissue microniches. bioRxiv. https://doi.org/10.1101/2025.02.07.637149v1](https://www.biorxiv.org/content/10.1101/2025.02.07.637149v1).
