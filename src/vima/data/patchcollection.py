@@ -90,6 +90,10 @@ class PatchCollection(Dataset):
         self.augmentation_off()
         print('in numpy mode')
 
+    def subset(self, ix):
+        self.patches = self.patches[ix]
+        self.meta = self.meta.iloc[ix]
+
     def __preprocess__(self, standardize, percentile_thresh, sid_nums=None):
         self.patches = np.array([
             self.samples[s].data[y:y+ps,x:x+ps,:]
