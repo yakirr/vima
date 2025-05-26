@@ -13,7 +13,7 @@ from .logging import LossLogger
 from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 
-def seed(seed=0, deterministic=True):
+def set_seed(seed=0, deterministic=True):
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
@@ -43,6 +43,7 @@ def kl_loss(mean : Tensor, logvar : Tensor, per_sample: bool=False):
         return torch.mean(kl)
 
 def train_one_epoch(models : list[nn.Module], train_dataset : Dataset,
+        generator : torch.Generator,
         optimizers : list[torch.optim.Optimizer], schedulers : list[LRScheduler],
         batch_size : int, log : LossLogger, kl_weight : float=1):
     for model in models:
@@ -52,7 +53,7 @@ def train_one_epoch(models : list[nn.Module], train_dataset : Dataset,
         dataset=train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        generator=torch.Generator(device=torch.get_default_device()))
+        generator=generator)
     
     print(f'#batches: {len(train_loader)}')
     for n, batch in enumerate(train_loader):
@@ -73,7 +74,9 @@ def train_one_epoch(models : list[nn.Module], train_dataset : Dataset,
             # Save info and log if necessary
             log.log_batch(modelid, n, loss, rloss, vaeloss, kl_weight, optimizer.param_groups[0]['lr'])
 
-def evaluate(model : nn.Module, eval_dataset : Dataset, kl_weight : float,
+def evaluate(model : nn.Module, eval_dataset : Dataset,
+             generator : torch.Generator,
+             kl_weight : float,
              batch_size : int=1000, detailed : bool=False, subset=None, sample_from_latent=False):
     if subset is not None:
         eval_dataset = torch.utils.data.Subset(eval_dataset, subset)
@@ -83,7 +86,7 @@ def evaluate(model : nn.Module, eval_dataset : Dataset, kl_weight : float,
         dataset=eval_dataset,
         batch_size=batch_size,
         shuffle=False,
-        generator=torch.Generator(device=torch.get_default_device()))
+        generator=generator)
 
     rlosses = []
     kllosses = []
@@ -101,11 +104,13 @@ def evaluate(model : nn.Module, eval_dataset : Dataset, kl_weight : float,
     else:
         return np.concatenate(rlosses).mean(), np.concatenate(kllosses).mean()
 
-def full_training(models : list[nn.Module], train_dataset : Dataset,
-        val_dataset : Dataset, optimizers : list[torch.optim.Optimizer],
-        schedulers : list[LRScheduler], P : PatchCollection, log : LossLogger,
-        batch_size : int=128, n_epochs : int=10,
-        kl_weight : float=1, kl_warmup : bool=True, stop_augmentation : float=1):
+def full_training(models : list[nn.Module],
+        train_dataset : Dataset, val_dataset : Dataset,
+        generator : torch.Generator,
+        optimizers : list[torch.optim.Optimizer],
+        schedulers : list[LRScheduler], log : LossLogger,
+        batch_size : int=128, n_epochs : int=20,
+        kl_weight : float=1, kl_warmup : bool=True):
     best_val_losses = [float('inf') for model in models]
     best_epoch = [-1 for i in range(len(models))]
 
@@ -116,15 +121,12 @@ def full_training(models : list[nn.Module], train_dataset : Dataset,
         ]
 
         for epoch in range(1, n_epochs + 1):
-            if epoch > stop_augmentation * n_epochs:
-                P.augmentation_off()
-
             train_one_epoch(
-                models, train_dataset, optimizers, schedulers, batch_size, log,
+                models, train_dataset, generator, optimizers, schedulers, batch_size, log,
                     kl_weight=kl_weight * min(epoch / 5, 1) if kl_warmup else kl_weight)
             
             for modelid, (model, scheduler, best_path) in enumerate(zip(models, schedulers, best_model_params_paths)):
-                rlosses, kllosses, _ = evaluate(model, val_dataset, kl_weight,
+                rlosses, kllosses, _ = evaluate(model, val_dataset, generator, kl_weight,
                     detailed=True, subset=range(0, len(val_dataset), max(1, len(val_dataset)//2000)))
                 scheduler.step()
                 log.log_epoch(modelid, rlosses + kllosses, rlosses, kllosses, models, val_dataset)
@@ -140,24 +142,30 @@ def full_training(models : list[nn.Module], train_dataset : Dataset,
         for model, best_path in zip(models, best_model_params_paths):
             model.load_state_dict(torch.load(best_path)) # load best model states
 
-def train_test_split(P, breakdown=[0.8,0.2]):
+def train_test_split(P, generator, breakdown=[0.8,0.2]):
     P.pytorch_mode()
     P.augmentation_on()
-    return torch.utils.data.random_split(P, breakdown, generator=torch.Generator(device=torch.get_default_device()))
+    return torch.utils.data.random_split(P, breakdown, generator=generator)
 
 def train(models, P, kl_weight=1e-5, kl_warmup=True, stop_augmentation=1,
           batch_size=256, n_epochs=20, lr=1e-3, gamma=0.9,
-          plot_reconstructions=False, on_epoch_end=None):
-    train_dataset, val_dataset = train_test_split(P)
+          plot_reconstructions=False, on_epoch_end=None, seed=0):
+    set_seed(seed)
+    g = torch.Generator(device=torch.get_default_device())
+    g.manual_seed(seed)
+
+    train_dataset, val_dataset = train_test_split(P, g)
     optimizers = [torch.optim.AdamW(model.parameters(), lr=lr) for model in models]
     schedulers = [torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma) for optimizer in optimizers]
     log = LossLogger(log_interval=20, detailed=plot_reconstructions,
                      Pmin=P.vmin, Pmax=P.vmax,
                      on_epoch_end=on_epoch_end)
     
-    full_training(models, train_dataset, val_dataset, optimizers, schedulers, P, log,
-                                    batch_size=batch_size, n_epochs=n_epochs,
-                                    kl_weight=kl_weight, kl_warmup=kl_warmup,
-                                    stop_augmentation=stop_augmentation)
+    full_training(models,
+                    train_dataset, val_dataset,
+                    g,
+                    optimizers, schedulers, log,
+                    batch_size=batch_size, n_epochs=n_epochs,
+                    kl_weight=kl_weight, kl_warmup=kl_warmup)
     
     return log

@@ -7,7 +7,7 @@ from . import models
 
 from .data.patchcollection import PatchCollection
 from .data.samples import read_samples, default_parser
-from .train.training import train, seed
+from .train.training import train, set_seed
 from .association import latentrep, association
 
 __all__ = ['d', 'a', 't', 'pp', 'v', 'models',
