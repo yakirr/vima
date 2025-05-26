@@ -3,10 +3,8 @@ import torch
 
 from .vae import VAE
 
-from . import resnetlight_simple_encoder as simple_enc
-from . import resnetlight_simple_decoder as simple_dec
-from . import resnetlight_advanced_encoder as adv_enc
-from . import resnetlight_advanced_decoder as adv_dec
+from . import resnetlight_encoder as enc
+from . import resnetlight_decoder as dec
 
 # based on https://github.com/eleannavali/resnet-18-autoencoder
 
@@ -21,18 +19,17 @@ class ResnetVAE(VAE):
             of network, 34 layers for default only network and 20 layers for light network. 
     """
 
-    def __init__(self, nmarkers, nsids, network='light', mode='advanced', num_layers=18, nlatent=100, variational=True):
+    def __init__(self, nmarkers, nsids, network='light', num_layers=18, nlatent=100):
         """Initialize the autoencoder.
 
         Args:
             network (str): a flag to efine the network version. Choices ['default' (default), 'light'].
-             num_layers (int): the number of layers to be created. Choices [18 (default), 34 (only for 
+            num_layers (int): the number of layers to be created. Choices [18 (default), 34 (only for 
                 'default' network), 20 (only for 'light' network).
+            nlatent (int): the dimentionality of the latent space.
         """
-        super().__init__()        
-        self.variational = variational
+        super().__init__()
         self.network = network
-        self.mode = mode
 
         if self.network == 'default':
             # if num_layers==18:
@@ -45,8 +42,6 @@ class ResnetVAE(VAE):
             #     raise NotImplementedError("Only resnet 18 & 34 autoencoder have been implemented for images size >= 64x64.")
             raise NotImplementedError("Only light network is supported currently.")
         elif self.network == 'light':
-            enc = simple_enc if mode == 'simple' else adv_enc
-            dec = simple_dec if mode == 'simple' else adv_dec
             if num_layers==18:
                 self.encoder = enc.LightEncoder(nmarkers, nsids, nlatent, enc.LightBasicBlockEnc, [2, 2, 2]) 
                 self.decoder = dec.LightDecoder(nmarkers, nsids, nlatent, dec.LightBasicBlockDec, [2, 2, 2]) 
