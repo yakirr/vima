@@ -8,6 +8,7 @@ class VAE(nn.Module, ABC):
 
     def __init__(self):
         super().__init__()
+        self.variational = True
 
     def reparameterize(self, mean : Tensor, logvar : Tensor):
         eps = torch.randn_like(mean)
@@ -16,7 +17,7 @@ class VAE(nn.Module, ABC):
     def forward(self, xs, sample_from_latent=True):
         _, sid_nums = xs
         mean, logvar = self.encode(xs)
-        z = self.reparameterize(mean, logvar) if sample_from_latent else mean
+        z = self.reparameterize(mean, logvar) if sample_from_latent and self.variational else mean
         x = self.decode((z, sid_nums))
 
         return x, mean, logvar
