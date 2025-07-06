@@ -440,17 +440,23 @@ def sanity_checks(outdir, repname, sid_to_covs=None):
     print('all PCs of one sample')
     s = xr.open_dataarray(f'{processeddir}/{sids[0]}.nc').astype(np.float32)
     s.plot(col='marker', col_wrap=5, vmin=-10, vmax=10, cmap='seismic')
+    plt.show()
 
     print('histogram of each pc')
-    harmpixels = pd.read_feather(f'{processeddir}/_allpixels_pca_harmony.feather')
-    nmms = harmpixels.values.shape[1] - len(harmony_cov_names) - 1 # the -1 accounts for sid
+    ss = [xr.open_dataarray(f'{processeddir}/{sid}.nc').astype(np.float32) for sid in sids]
+    nmms = len(ss[0].marker)
+    harmpixels = np.concatenate([s.data.reshape((-1, nmms)) for s in ss])
+    harmpixels = harmpixels[(harmpixels != 0).sum(axis=1) > 0]
     plt.figure(figsize=(3*4, 2*int(np.ceil(nmms/4))))
     for i in range(nmms):
         print(i, end='')
         plt.subplot(int(np.ceil(nmms/4)), 4, i+1)
-        plt.hist(harmpixels.values[:,i], bins=1000)
+        plt.hist(harmpixels[:,i], bins=1000)
     plt.tight_layout()
     plt.show()
+    del ss
+    del harmpixels
+    gc.collect()
 
     print('PC1 of several samples')
     fig, axs = plt.subplots(len(sids[::5])//5 + 1, 5, figsize=(16, 4*(len(sids[::5])//5 + 1)))
