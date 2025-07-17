@@ -9,7 +9,7 @@ from skimage.filters import threshold_otsu
 import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-import gc, os, subprocess
+import gc, os, subprocess, time
 from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 
@@ -67,6 +67,35 @@ def pixellist_to_pixelmatrix(pl, markers):
     print('sample shape:', s.shape)
 
     return s
+
+def transcriptlist_to_pixelmatrix(file, outdir, donor, sid, x_colname, y_colname, gene_colname, pixel_size):
+    print('\tReading data')
+    start_time = time.time()
+    data = pd.read_csv(file)
+    print(f'Elapsed time: {time.time() - start_time} seconds')
+    print('\tNumber of transcripts:', len(data))
+    
+    # process data
+    print('\tMaking pixel list')
+    pl = transcriptlist_to_pixellist(
+        data,
+        x_colname=x_colname,
+        y_colname=y_colname,
+        gene_colname=gene_colname,
+        pixel_size=pixel_size
+    )
+    markers = pl.columns[2:]
+    print(len(markers), 'markers')
+    
+    print('\tMaking pixel matrix')
+    s = pixellist_to_pixelmatrix(pl, markers)
+    s.name = f'{donor}_{sid}'
+    
+    # write
+    print('\tWriting data')
+    compression = {'zlib': True, 'complevel': 2}
+    s.astype(np.float32).to_netcdf(f'{outdir}/{donor}_{sid}.nc', encoding={s.name: compression}, engine="netcdf4")
+    gc.collect()
 
 def df_to_xarray32(df):
     markers = df.columns.get_level_values('markers').unique()
