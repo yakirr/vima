@@ -88,9 +88,9 @@ def _association(MAMresid, M, Nmodels, y, batches, donorids, ks=None, Nnull=1000
         warnings.warn('global association p-value attained minimal possible value. '+\
                 'Consider increasing Nnull')
         
-    shape, loc, scale = st.gamma.fit(nullglobalstats)
-    gamma_p = 1 - st.gamma.cdf(globalstat, shape, loc=loc, scale=scale)
-    print(f'Gamma p-value = {gamma_p}')
+    # shape, loc, scale = st.gamma.fit(nullglobalstats)
+    # gamma_p = 1 - st.gamma.cdf(globalstat, shape, loc=loc, scale=scale)
+    # print(f'Gamma p-value = {gamma_p}')
     
     maxcorr = max(np.abs(mncorrs_meta).max(), 0.001)
     fdr_thresholds = np.arange(maxcorr/4, maxcorr, maxcorr/400)
@@ -100,7 +100,7 @@ def _association(MAMresid, M, Nmodels, y, batches, donorids, ks=None, Nnull=1000
         'fdr':fdr_vals,
         'num_detected': [(np.abs(mncorrs)>t).sum() for t in fdr_thresholds]})
 
-    res = {'p':p, 'gamma_p':gamma_p, 'mncorrs':mncorrs_meta, 'fdrs':fdrs,
+    res = {'p':p, 'mncorrs':mncorrs_meta, 'fdrs':fdrs,
             'globalstat':globalstat, 'nullglobalstats':nullglobalstats,
             'weights':weights,
             'nullmncorrs':nullmncorrs_meta,
@@ -191,6 +191,8 @@ def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_add
         matching_fdrs = res.fdrs.loc[res.fdrs.threshold <= abs(ncorr)].fdr
         return matching_fdrs.min() if not matching_fdrs.empty else 1
     D.obs[f'{key_added}_fdr'] = D.obs[key_added].apply(min_fdr_for_corr)
+    D.uns['vima_p'] = res.p
+    D.uns['vima_pheno'] = y.name
 
     if return_full:
         return res, D

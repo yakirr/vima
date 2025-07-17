@@ -12,4 +12,4 @@ from .cc import latentreps, association
 
 __all__ = ['d', 'cc', 't', 'pp', 'v', 'models',
            'PatchCollection', 'read_samples', 'default_parser',
-           'train', 'set_seed', 'latentreps', 'cc']
+           'train', 'set_seed', 'latentreps', 'association', 'cc']
