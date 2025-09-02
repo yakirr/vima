@@ -107,7 +107,7 @@ def _association(MAMresid, M, Nmodels, y, batches, donorids, ks=None, Nnull=1000
             }
     return Namespace(**res)
 
-def avg_graph(ds, weights, kept, make_umap=True):
+def weighted_avg_graph(ds, weights, kept, make_umap=True):
     M = kept.sum()
     D = sc.AnnData(X=np.random.randn(M, ds[0].X.shape[1]),
                    obs=ds[0].obs.iloc[kept].copy(deep=True))
@@ -134,9 +134,17 @@ def avg_graph(ds, weights, kept, make_umap=True):
 
     return D
 
+def avg_graph(ds, make_umap=True):
+    return weighted_avg_graph(ds,
+                              np.ones((len(ds), len(ds[0])))/len(ds),
+                              kept=np.array([True]*len(ds[0])),
+                              make_umap=make_umap
+                              )
+
 def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_added='mncoef',
                 return_full=False, ridges=None, Nnull=10000, seed=0, make_umap=True,
-                nsteps=None, show_progress=False, allow_low_sample_size=False, **kwargs):
+                nsteps=None, show_progress=False, allow_low_sample_size=False,
+                max_num_mns=200000, **kwargs):
     if seed is not None: np.random.seed(seed)
     
     # Check that all ds have identical metadata
@@ -147,7 +155,7 @@ def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_add
     batches, filter_samples = cna.tl._association.check_inputs(ds[0], y, sid_name, batches, covs, donorids, allow_low_sample_size)
 
     # Compute NAMs and filter to the appopriate samples and columns
-    print('computing MAMs')
+    print('computing MAT') #TODO: rename MAM to MAT in code if we keep this nomenclature
     MAMs = []
     kepts = []
     for d in ds:
@@ -156,6 +164,12 @@ def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_add
         MAMs.append(MAM)
         kepts.append(kept)
     kept = np.logical_and.reduce(kepts)
+    if kept.sum() > max_num_mns:
+        print(f'There are {kept.sum()} microniches, which is greater than the maximum allowed ({max_num_mns}). Downsampling to {max_num_mns} microniches.')
+        true_indices = np.where(kept)[0]
+        downsampled_indices = np.random.choice(true_indices, size=max_num_mns, replace=False)
+        kept[:] = False
+        kept[downsampled_indices] = True
     for i in range(len(MAMs)):
         MAMs[i] = MAMs[i][ds[0].obs.index[kept]]
 
@@ -181,7 +195,7 @@ def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_add
     res.kept = kept
     
     # make anndata with results
-    D = avg_graph(ds, res.weights, kept, make_umap=make_umap)
+    D = weighted_avg_graph(ds, res.weights, kept, make_umap=make_umap)
     if key_added in D.obs:
         warnings.warn(f"Key '{key_added}' already exists in d.obs. Overwriting.")
     D.obs[key_added] = res.mncorrs
