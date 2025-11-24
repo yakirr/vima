@@ -8,7 +8,13 @@ To use `vima`, you can either install it directly from the [Python Package Index
 
 or if you'd like to manipulate the source code you can clone this repository and add it to your `PYTHONPATH`.
 
-Note that the package requires a working installation of `pytorch`, and it may be beneficial to first install `pytorch`, verify it works properly, and then install `vima`. For data preprocessing the current version of the package also requires a working `R` environment with the [`harmony` package](https://github.com/immunogenomics/harmony) installed. You will need the path to the `Rscript` executable in your `R` environment, which you can obtain by running `which Rscript` with the `R` environment active.
+Note that the package requires a working installation of `pytorch`, and it may be beneficial to first install `pytorch`, verify it works properly, and then install `vima`.
+
+For data preprocessing the current version of the package also requires a working `R` environment with the [`harmony` package](https://github.com/immunogenomics/harmony) and [`arrow` package](https://arrow.apache.org/docs/r/) installed. You can create such an environment easily with [`conda`](https://docs.conda.io/en/latest/) by running
+
+`conda create -n Renv -c conda-forge r-base r-harmony r-arrow`
+
+To use `vima` you'll need the path to the `Rscript` executable in this `R` environment, which you can get by running `which Rscript` with the `R` environment active.
 
 ## demo
 Take a look at our [demo](https://github.com/yakirr/vima/blob/main/demo/demo_IHC.ipynb) to see how to get started with an example analysis. We plan to put up demos for other data modalities in the future.
@@ -16,4 +22,4 @@ Take a look at our [demo](https://github.com/yakirr/vima/blob/main/demo/demo_IHC
 ## citation
 If you use `vima`, please cite:
 
-[Y. Reshef, et al. Powerful and accurate case-control analysis of spatial molecular data with deep learning-defined tissue microniches. bioRxiv. https://doi.org/10.1101/2025.02.07.637149v1](https://www.biorxiv.org/content/10.1101/2025.02.07.637149v1).
+[Y. Reshef, et al. Powerful and accurate case-control analysis of spatial molecular data. bioRxiv. https://doi.org/10.1101/2025.02.07.637149v1](https://www.biorxiv.org/content/10.1101/2025.02.07.637149v2).

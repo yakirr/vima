@@ -163,7 +163,7 @@ def foreground_mask_codex(s, real_markers, neg_ctrls, blur_width=5):
 
 def write_masks(pixelsdir, outdir, get_foreground, sids, plot=True, vmax=30):
     for sid in sids:
-        print(sid, end=': ')
+        print(f'"{sid}"', end=': ')
         s = xr.load_dataarray(f'{pixelsdir}/{sid}.nc').astype(np.float32)
         
         # make mask and save
@@ -386,7 +386,7 @@ def preprocess(outdir, repname, get_foreground, get_sumstats, normalize,
 
     # prepare
     sids = [os.path.splitext(f)[0]
-        for f in os.listdir(countsdir) if f.endswith('.nc')]
+        for f in os.listdir(countsdir) if f.endswith('.nc') and not f.startswith('.')]
 
     # create and write masks
     write_masks(countsdir, masksdir, get_foreground, sids, plot=plot)
@@ -423,7 +423,7 @@ def harmonize(allpixels_pca, path_to_Rscript, sid_to_covs=None, plot=True):
     
     # run harmony script
     path_to_script = os.path.dirname(__file__) + '/harmonize.R'
-    command = [path_to_Rscript, path_to_script, temp_file.name] + harmony_cov_names
+    command = [path_to_Rscript, path_to_script, '32', temp_file.name] + harmony_cov_names # will request up to 32 cores for harmony
     try:
         print('=== running harmony ===')
         subprocess.run(command, check=True)
