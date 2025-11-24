@@ -407,7 +407,7 @@ def preprocess(outdir, repname, get_foreground, get_sumstats, normalize,
     # apply the PC loadings to plain pixels
     return pca_pixels(normeddir, masksdir, loadings, sids)    
 
-def harmonize(allpixels_pca, path_to_Rscript, sid_to_covs=None, plot=True):
+def harmonize(allpixels_pca, path_to_Rscript, sid_to_covs=None, ncores=32, plot=True):
     # add covariates
     if sid_to_covs is not None:
         harmony_cov_names = list(sid_to_covs.columns)
@@ -423,7 +423,7 @@ def harmonize(allpixels_pca, path_to_Rscript, sid_to_covs=None, plot=True):
     
     # run harmony script
     path_to_script = os.path.dirname(__file__) + '/harmonize.R'
-    command = [path_to_Rscript, path_to_script, '32', temp_file.name] + harmony_cov_names # will request up to 32 cores for harmony
+    command = [path_to_Rscript, path_to_script, str(ncores), temp_file.name] + harmony_cov_names # will request up to 32 cores for harmony
     try:
         print('=== running harmony ===')
         subprocess.run(command, check=True)
