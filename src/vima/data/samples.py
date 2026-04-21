@@ -53,7 +53,7 @@ def get_boundary(mask, color, thickness=10):
 def plot_sample_with_patches(s, marker, patchmeta, remove_margin=False, ax=None, show=True, **kwargs):
     if ax is None: ax = plt.gca()
 
-    inpatches = union_patches_in_sample(patchmeta, s)
+    inpatches = union_patches_in_sample(patchmeta, s).astype(np.uint8)
     
     if remove_margin and inpatches.sum() > 0:
         indices = np.where(inpatches)
@@ -64,18 +64,18 @@ def plot_sample_with_patches(s, marker, patchmeta, remove_margin=False, ax=None,
     else:
         x_min, x_max = 0, inpatches.sizes['x']
         y_min, y_max = 0, inpatches.sizes['y']
-    
-    # Display the image with contours
-    thickness = int(max(x_max-x_min, y_max-y_min)/100)+1
-    s = s[y_min:y_max, x_min:x_max]
-    contour = xr.DataArray(
-        get_boundary(inpatches.data, (0,0,0,1), thickness=thickness)[y_min:y_max, x_min:x_max],
-        dims=['y','x','rgba'],
-        coords={'y':s.y, 'x':s.x})
 
-    s.sel(marker=marker).plot(ax=ax, zorder=0, **kwargs)
-    contour.plot.imshow(rgb='rgba', ax=ax, zorder=1)
+    # find contours of the patches in the sample
+    contours, _ = cv2.findContours(inpatches.data, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+
+    # plot
+    ax.imshow(s.sel(marker=marker).data, **kwargs, cmap='seismic')
+    for cnt in contours:
+        cnt = cnt.squeeze()  # remove unnecessary dimensions
+        ax.plot(cnt[:, 0], cnt[:, 1], color='red')
     ax.set_aspect('equal')
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_max, y_min)
 
     if show:
         plt.show()
@@ -84,7 +84,7 @@ def plot_samples_with_patches(samples, marker, patchmeta, ncols=5, **kwargs):
     nrows = int(np.ceil(len(samples) / ncols))
     fig, axs = plt.subplots(nrows, ncols, figsize=(3*ncols, 3*nrows))
     for ax, s in pb(zip(axs.flatten(), samples)):
-        plot_sample_with_patches(s, marker, patchmeta, ax=ax, show=False, add_colorbar=False, **kwargs)
+        plot_sample_with_patches(s, marker, patchmeta, ax=ax, show=False, **kwargs)
         ax.set_title(s.sid)
     fig.tight_layout()
     fig.show()

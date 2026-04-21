@@ -198,11 +198,12 @@ def diff_markers(patch_avgs, pos_set, neg_set, markernames, labels=['T','F'], nm
                  var_name='marker', value_name='value', ignore_index=False)
     df.loc[pos_set, 'status'] = labels[0]
     df.loc[neg_set, 'status'] = labels[1]
-    sns.violinplot(data=df.reset_index(drop=True), x='marker', y='value', hue='status', ax=ax, **kwargs)
+    df = df.reset_index(drop=True)
+    sns.violinplot(data=df, x='marker', y='value', hue='status', ax=ax, **kwargs)
     if show:
         plt.show()
 
-    return marker_diffs[:nmarkers].index.values, marker_diffs.iloc[-nmarkers:].index.values
+    return marker_diffs[:nmarkers].index.values, marker_diffs.iloc[-nmarkers:].index.values, df
 
 def spatialplot(samples, sortkey, allpatches, scores, rgbs=[[1.,0.,0.]],
         labels=None,
