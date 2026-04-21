@@ -18,9 +18,9 @@ def visualize_pixels(pixels, ntoplot, input, colorby, include_pca_plot=False):
     np.random.seed(0)
     ix = np.random.choice(len(pixels), replace=False, size=ntoplot)
     toplot = pixels.iloc[ix]
-    toplot_ad = ad.AnnData(
-        X=toplot[pcs],
-        obs=toplot[metavars])
+    obs = toplot[metavars].copy()
+    obs.index = obs.index.astype(str)
+    toplot_ad = ad.AnnData(X=toplot[pcs], obs=obs)
     sc.pp.neighbors(toplot_ad, use_rep='X')
     sc.tl.umap(toplot_ad)
     
@@ -58,7 +58,7 @@ def pca_pixels(outdir, repname, nmetamarkers=10, plot=True, npixels_to_plot=5000
     metapixels, npixels = dimreduce.metapixels_allsamples(normeddir, masksdir, sids, plot=plot)
 
     # PCA the metapixels
-    loadings, C, allmp = dimreduce.pca_metapixels(metapixels.values(), nmetamarkers)
+    loadings, C, allmp = dimreduce.pca_metapixels(metapixels.values(), nmetamarkers, plot=plot)
     loadings.to_feather(f'{processeddir}/_pcloadings.feather')
     del metapixels, allmp; gc.collect()
 
@@ -132,8 +132,7 @@ def sanity_checks(outdir, repname, sid_to_covs=None):
     harmpixels = np.concatenate([s.data.reshape((-1, nmms)) for s in ss])
     harmpixels = harmpixels[(harmpixels != 0).sum(axis=1) > 0]
     plt.figure(figsize=(3*4, 2*int(np.ceil(nmms/4))))
-    for i in range(nmms):
-        print(i, end='')
+    for i in pb(range(nmms)):
         plt.subplot(int(np.ceil(nmms/4)), 4, i+1)
         plt.hist(harmpixels[:,i], bins=1000)
     plt.tight_layout()
