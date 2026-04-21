@@ -6,6 +6,8 @@ import torch
 import xarray as xr
 import seaborn as sns
 import pandas as pd
+from tqdm import tqdm
+pb = lambda x: tqdm(x, ncols=100)
 from .data import samples as tds
 
 def plot_with_reconstruction(model, examples, show=True, channels=[0,1,2], pmin=None, pmax=None, cmap='seismic'):
@@ -217,8 +219,7 @@ def spatialplot(samples, sortkey, allpatches, scores, rgbs=[[1.,0.,0.]],
     fig, axs = plt.subplots(nrows=nrows, ncols=ncols,
                             figsize=(ncols*size,nrows*size))
 
-    for ax, sid in zip(axs.flatten(), sortkey[toplot].sort_values().index[::skipevery]):
-        print('.', end='')
+    for ax, sid in pb(zip(axs.flatten(), sortkey[toplot].sort_values().index[::skipevery])):
         mypatches = allpatches[allpatches.sid == sid]
 
         canvas = tds.union_patches_in_sample(mypatches, samples[sid])

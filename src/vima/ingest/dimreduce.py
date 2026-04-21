@@ -76,13 +76,23 @@ def pca_metapixels(mps, k, plot=True):
     allmp -= allmp.values.mean(axis=0, dtype=np.float64)
     allmp /= allmp.values.std(axis=0, dtype=np.float64)
     allmp = allmp.fillna(0)
+    allmp.index = np.arange(len(allmp)).astype(str)
     allmp = ad.AnnData(X=allmp)
     C = np.corrcoef(allmp.X[::max(1,(len(allmp)//50000))].T)
-    print(allmp.shape)
+    print(f'Metapixel matrix: {allmp.shape[0]:,} pixels × {allmp.shape[1]} features')
 
-    print('performing PCA')
+    print('performing PCA...')
     sc.tl.pca(allmp, n_comps=k)
     loadings = pd.DataFrame(data=allmp.varm['PCs'], columns=[f'PC{i}' for i in range(1,k+1)], index=allmp.var_names)
+
+    print()
+    print('top/bottom features per PC (features with negative loadings preceded by "-"):')
+    top_bottom = {}
+    for pc in loadings.columns:
+        col = loadings[pc].sort_values()
+        top_bottom[pc] = list(col.index[-5:]) + [f'-{g}' for g in col.index[:5]]
+    print(pd.DataFrame(top_bottom).to_string(index=False))
+    print()
 
     if plot:
         plt.figure(figsize=(4, len(loadings)/6))
