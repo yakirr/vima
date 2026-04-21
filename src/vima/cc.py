@@ -85,7 +85,7 @@ def _association(MAMresid, M, Nmodels, y, batches, donorids, ks=None, Nnull=1000
 
     # compute global p-vaule
     p = ((nullglobalstats >= globalstat).sum() + 1)/(len(nullglobalstats) + 1)
-    print(f'\033[92mP = {p}\033[0m')
+    print(f'\033[32mP = {p}\033[0m')
     if p <= 1/(Nnull + 1)+1e-10:
         warnings.warn('global association p-value attained minimal possible value. '+\
                 'Consider increasing Nnull')
