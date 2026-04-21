@@ -16,7 +16,9 @@ def anndata(patchmeta, Z, var_names=None, use_rep='X', n_comps=10, **kwargs):
     d = ad.AnnData(Z)
     if var_names is not None:
         d.var_names = var_names
-    d.obs = patchmeta
+    obs = patchmeta.copy()
+    obs.index = obs.index.astype(str)
+    d.obs = obs
 
     if use_rep == 'X_pca':
         sc.tl.pca(d, n_comps=min(n_comps, Z.shape[1]-1))
@@ -83,7 +85,7 @@ def _association(MAMresid, M, Nmodels, y, batches, donorids, ks=None, Nnull=1000
 
     # compute global p-vaule
     p = ((nullglobalstats >= globalstat).sum() + 1)/(len(nullglobalstats) + 1)
-    print(f'P = {p}')
+    print(f'\033[92mP = {p}\033[0m')
     if p <= 1/(Nnull + 1)+1e-10:
         warnings.warn('global association p-value attained minimal possible value. '+\
                 'Consider increasing Nnull')
@@ -109,8 +111,9 @@ def _association(MAMresid, M, Nmodels, y, batches, donorids, ks=None, Nnull=1000
 
 def weighted_avg_graph(ds, weights, kept, make_umap=True):
     M = kept.sum()
-    D = sc.AnnData(X=np.random.randn(M, ds[0].X.shape[1]),
-                   obs=ds[0].obs.iloc[kept].copy(deep=True))
+    obs = ds[0].obs.iloc[kept].copy(deep=True)
+    obs.index = obs.index.astype(str)
+    D = sc.AnnData(X=np.random.randn(M, ds[0].X.shape[1]), obs=obs)
 
     combined = sp.csr_matrix((M, M))
     combined_dist = sp.csr_matrix((M, M))
@@ -119,14 +122,17 @@ def weighted_avg_graph(ds, weights, kept, make_umap=True):
         combined += row_scaling @ d.obsp['connectivities'][kept, :][:, kept]
         combined_dist += row_scaling @ d.obsp['distances'][kept, :][:, kept]
     D.obsp['connectivities'] = combined
-    D.obsp['distances'] = combined_dist    
-    
+    D.obsp['distances'] = combined_dist
+
     D.uns['neighbors'] = {
         'connectivities_key': 'connectivities',
         'distances_key': 'distances',
         'params': {
-            'method': 'custom',
-            'metric': 'euclidean'  # or whatever is appropriate
+            'method': 'umap',
+            'metric': 'euclidean',
+            'n_neighbors': 15,
+            'use_rep': 'X',
+            'n_pcs': None,
         }
     }
     if make_umap:
