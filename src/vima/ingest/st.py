@@ -45,7 +45,9 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
         
         # create scanpy object and filter empty/near-empty pixels
         genes = pl.columns[2:]
-        pl = sc.AnnData(pl[genes].values.astype(np.float32), var=pd.DataFrame(index=genes), obs=pl[['pixel_x', 'pixel_y']])
+        obs = pl[['pixel_x', 'pixel_y']].copy()
+        obs.index = obs.index.astype(str)
+        pl = sc.AnnData(pl[genes].values.astype(np.float32), var=pd.DataFrame(index=genes), obs=obs)
         sc.pp.filter_cells(pl, min_counts=min_ntranscripts, inplace=True)
         
         # compute moments
