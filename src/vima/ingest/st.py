@@ -27,7 +27,8 @@ def med_ntranscripts(load, filepaths, x_col, y_col, pixel_size=10):
     return np.mean(np.array(medians))
 
 def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_genes_per_sample=200, genes_to_add=[],
-                 pixel_size=10, min_mean=0.01, min_ntranscripts=10, min_npixels=20, min_totalcounts=500, plot=True):
+                 pixel_size=10, min_mean=0.01, min_ntranscripts=10, min_npixels=20, min_totalcounts=500, plot_mean_var=True,
+                 plot_spatial_hvgs=False):
     union_hvgs = set()
     union_allgenes = set()
     means = []
@@ -72,66 +73,38 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
                 hvgs = pl.var_names[pl.var.highly_variable & (pl.var.means >= min_mean)].tolist()
                 hvgs = hvgs + list(set(genes_to_add) & set(pl.var_names))
                 
-                if plot:
-                    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-                    # Left panel: histogram of mean expression
-                    axes[0].hist(np.log10(pl.var.means), bins=50, alpha=0.8, edgecolor='black')
-                    axes[0].axvline(np.log10(min_mean), color='red', linestyle='--', label='min_mean threshold')
-                    axes[0].set_xlabel('log(Mean counts)')
-                    axes[0].set_ylabel('Number of genes')
-                    axes[0].set_title(f'{sid} - Mean expression distribution')
-                    
-                    # Right panel: mean vs variance scatter plot
-                    axes[1].scatter(pl.var.means, np.sqrt(pl.var.variances), alpha=0.8, s=4)
-                    axes[1].scatter(pl.var.loc[hvgs, 'means'], np.sqrt(pl.var.loc[hvgs, 'variances']), alpha=0.8, s=4)
-                    axes[1].set_yscale('log')
-                    for gene in hvgs:
-                        mean = pl.var.loc[gene, 'means']
-                        var = pl.var.loc[gene, 'variances']
-                        axes[1].text(mean, np.sqrt(var), gene, fontsize=8, alpha=0.7)
-                    axes[1].set_xlabel('Mean counts')
-                    axes[1].set_ylabel('Std. Dev.')
-                    axes[1].set_title(sid)    
-                    plt.tight_layout()
-                    plt.show(); plt.close(fig)
-                    sc.pl.highly_variable_genes(pl, log=True)
-                    plt.show()
+                if plot_mean_var:
+                    sc.pl.highly_variable_genes(pl, log=True, show=True)
 
-                    top20 = (
-                        pl.var
-                        .sort_values('means', ascending=False)
-                        .head(20)[['means', 'highly_variable']]
-                    )
-                    print(top20)
-
-                    top20_genes = (
-                        pl.var
-                        .sort_values('means', ascending=False)
-                        .head(20)
+                if plot_spatial_hvgs:
+                    top8 = (
+                        pl.var.loc[hvgs]
+                        .sort_values('variances_norm', ascending=False)
+                        .head(8)
                         .index
                         .tolist()
                     )
-                    x = pl.obs['pixel_x']
-                    y = pl.obs['pixel_y']
-
-                    for gene in top20_genes:
+                    x = pl.obs['pixel_x'].values
+                    y = pl.obs['pixel_y'].values
+                    fig, axes = plt.subplots(2, 4, figsize=(16, 8))
+                    fig.suptitle(sid)
+                    for ax, gene in zip(axes.flatten(), top8):
                         expr = pl[:, gene].X
-
-                        # handle sparse matrices
                         if not isinstance(expr, np.ndarray):
                             expr = expr.toarray().ravel()
                         else:
                             expr = expr.ravel()
-
-                        plt.figure(figsize=(4,4))
-                        plt.scatter(x, y, c=expr, s=2, cmap='viridis', vmax=np.percentile(expr, 90))
-                        plt.title(gene)
-                        plt.colorbar(label='expression')
-                        plt.xlabel('x')
-                        plt.ylabel('y')
-                        plt.tight_layout()
-                        plt.show()
-
+                        top = np.percentile(expr, 90)
+                        if top == 0:
+                            top = expr.max() / 2
+                        ax.scatter(x[expr==0], y[expr==0], color='gray', s=0.2)
+                        ax.scatter(x[expr>0], y[expr>0], c=expr[expr>0], s=0.2, alpha=0.5, cmap='viridis', vmax=top)
+                        ax.set_title(gene)
+                        ax.set_aspect('equal')
+                        ax.axis('off')
+                    plt.tight_layout()
+                    plt.show()
+                    plt.close(fig)
 
                 union_hvgs.update(hvgs)
                 print(f'\033[92m\t{len(union_hvgs)} HVGs across all samples so far.\033[0m')
@@ -146,7 +119,7 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
     return list(union_hvgs), means.mean(axis=1), stds.mean(axis=1)
 
 def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel_size, target_sum, means, stds,
-                                  genes=None, min_ngenes_per_pixel=5, min_ntranscripts_per_pixel=10, plot=True):
+                                  genes=None, min_ngenes_per_pixel=5, min_ntranscripts_per_pixel=10, plot_mean_var=True):
     print(f'\tNumber of transcripts: {len(data)/1e6:.2f}M')
     
     # process data
@@ -161,12 +134,12 @@ def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel
     markers = pl.columns[2:]
     print(f'{len(pl)} pixels.')
 
-    if plot:
+    if plot_mean_var:
         plt.figure(figsize=(5,5))
         plt.scatter(pl.pixel_x, pl.pixel_y, c='gray', s=0.1, alpha=0.2)
     pl = pl[(pl[markers] != 0).sum(axis=1) >= min_ngenes_per_pixel]
     pl = pl[(pl[markers].sum(axis=1) >= min_ntranscripts_per_pixel) & (pl[list(set(markers) & set(genes))].sum(axis=1) > 0)]
-    if plot:
+    if plot_mean_var:
         plt.scatter(pl.pixel_x, pl.pixel_y, c=pl[markers].sum(axis=1), s=0.1, alpha=0.8, vmin=0, vmax=100)
         plt.gca().set_aspect('equal'); plt.title('transcript density (gray = failed qc)'); plt.axis('off'); plt.show()
     print(f'\t{len(pl)} pixels after QC.')
@@ -194,13 +167,14 @@ def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel
     return mask, s.astype(np.float32)
 
 def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_top_genes_per_sample, pixel_size, outdir,
-                                    genes_to_add=[], plot=True):
+                                    genes_to_add=[], plot_mean_var=True, plot_spatial_hvgs=False):
     print('Computing normalization factor...')
     normfactor = med_ntranscripts(load, filepaths, x_col, y_col, pixel_size=pixel_size)
     print('Finding HVGs and dataset-wide mean and variance per gene...')
     hvgs, means, stds = get_sumstats(load, filepaths, normfactor, x_col, y_col, gene_col,
                                      n_top_genes_per_sample=n_top_genes_per_sample,
-                                     genes_to_add=genes_to_add, pixel_size=pixel_size, plot=plot)
+                                     genes_to_add=genes_to_add, pixel_size=pixel_size, plot_mean_var=plot_mean_var,
+                                     plot_spatial_hvgs=plot_spatial_hvgs)
     print('Final number of genes used =', len(hvgs))
 
     print('Rasterizing and normalizing...')
@@ -211,22 +185,23 @@ def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_t
     for i, filepath in enumerate(filepaths):
         sid, data = load(filepath)
         print(f'Processing sample {i+1}/{len(filepaths)}: {sid}')
-        mask, pm = transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel_size, normfactor, means, stds, genes=hvgs, plot=plot)
+        mask, pm = transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel_size, normfactor, means, stds, genes=hvgs, plot_mean_var=plot_mean_var)
         del data; gc.collect()
         util.write_xarray(mask, f'{masksdir}/{pm.name}.nc')
         util.write_xarray(pm, f'{normdir}/{pm.name}.nc')
 
-def prepare_xenium5k(load, filepaths, x_col, y_col, gene_col, n_top_genes_per_sample, outdir, pixel_size=10, genes_to_add=[], plot=True):
+def prepare_xenium5k(load, filepaths, x_col, y_col, gene_col, n_top_genes_per_sample, outdir, pixel_size=10, genes_to_add=[], plot_mean_var=True, plot_spatial_hvgs=False):
     rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col,
                                   n_top_genes_per_sample,
                                   pixel_size=pixel_size,
                                   outdir=outdir,
                                   genes_to_add=genes_to_add,
-                                  plot=plot)
+                                  plot_mean_var=plot_mean_var,
+                                  plot_spatial_hvgs=plot_spatial_hvgs)
 
-def prepare_merfish(load, filepaths, x_col, y_col, gene_col, outdir, pixel_size=10, plot=True):
+def prepare_merfish(load, filepaths, x_col, y_col, gene_col, outdir, pixel_size=10, plot_mean_var=True):
     rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col,
                                   None,
                                   pixel_size=pixel_size,
                                   outdir=outdir,
-                                  plot=plot)
+                                  plot_mean_var=plot_mean_var)
