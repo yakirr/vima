@@ -91,7 +91,9 @@ def pca_metapixels(mps, k, plot=True):
     for pc in loadings.columns:
         col = loadings[pc].sort_values()
         top_bottom[pc] = list(col.index[-5:]) + [f'-{g}' for g in col.index[:5]]
-    print(pd.DataFrame(top_bottom).to_string(index=False))
+    s = pd.DataFrame(top_bottom).to_string(index=False).split('\n')
+    print('\033[1;36m' + s[0] + '\033[0m')
+    print('\n'.join(s[1:]))
     print()
 
     if plot:

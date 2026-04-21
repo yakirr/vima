@@ -1,5 +1,4 @@
 import numpy as numpy
-import pandas as pd
 import numpy as np
 import xarray as xr
 import cv2 as cv2
@@ -7,7 +6,7 @@ import scanpy as sc
 import anndata as ad
 import seaborn as sns
 import matplotlib.pyplot as plt
-import gc, os, subprocess, tempfile
+import gc, os
 from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 from . import util, dimreduce
@@ -72,31 +71,21 @@ def pca_pixels(outdir, repname, nmetamarkers=10, plot=True, npixels_to_plot=5000
         visualize_pixels(pca, npixels_to_plot, 'metamarkers', cov_names)
     return pca
 
-def harmonize(allpixels_pca, path_to_Rscript, npixels_to_plot=50000, sid_to_covs=None, ncores=32, plot=True):
-    # add covariates
+def harmonize(allpixels_pca, sid_to_covs=None, npixels_to_plot=50000, plot=True):
+    import harmonypy as hm
+
     harmony_cov_names = add_covs(allpixels_pca, sid_to_covs)
-    
-    # write out the data
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".feather") as temp_file:
-        allpixels_pca.to_feather(temp_file.name)
-    
-    # run harmony script
-    path_to_script = os.path.dirname(__file__) + '/harmonize.R'
-    command = [path_to_Rscript, path_to_script, str(ncores), temp_file.name] + harmony_cov_names # will request up to 32 cores for harmony
-    try:
-        print('=== running harmony ===')
-        subprocess.run(command, check=True)
-        print('=== finished running harmony ===')
-    except subprocess.CalledProcessError as e:
-        print(f"Error running harmony: {e}")
-        return None
-    
-    # collect output of harmony script and visualize
-    base, ext = os.path.splitext(temp_file.name)
-    harmpixels = pd.read_feather(f"{base}_harmony{ext}")
+    pcs = [c for c in allpixels_pca.columns if c.startswith('PC')]
+
+    print('Running Harmony...')
+    harmony_out = hm.run_harmony(allpixels_pca[pcs].values, allpixels_pca, harmony_cov_names)
+
+    harmpixels = allpixels_pca.copy()
+    harmpixels[pcs] = harmony_out.Z_corr
+
     if plot:
         visualize_pixels(harmpixels, npixels_to_plot, 'harm. metamarkers', harmony_cov_names)
-    
+
     return harmpixels
 
 def write_harmonized(outdir, repname, harmpixels):
