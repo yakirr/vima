@@ -92,7 +92,7 @@ def evaluate(model : nn.Module, eval_dataset : Dataset,
     kllosses = []
     embeddings = []
     with torch.no_grad():
-        for batch in pb(eval_loader):
+        for batch in eval_loader:
             predictions, mean, logvar = model.forward(batch, sample_from_latent=sample_from_latent)
 
             rlosses.append(reconstruction_loss(batch, predictions, per_sample=True).detach().cpu().numpy())
@@ -125,7 +125,8 @@ def full_training(models : list[nn.Module],
                 models, train_dataset, generator, optimizers, schedulers, batch_size, log,
                     kl_weight=kl_weight * min(epoch / 5, 1) if kl_warmup else kl_weight)
             
-            for modelid, (model, scheduler, best_path) in enumerate(zip(models, schedulers, best_model_params_paths)):
+            print('Evaluating models on validation set...')
+            for modelid, (model, scheduler, best_path) in enumerate(zip(pb(models), schedulers, best_model_params_paths)):
                 rlosses, kllosses, _ = evaluate(model, val_dataset, generator, kl_weight,
                     detailed=True, subset=range(0, len(val_dataset), max(1, len(val_dataset)//2000)))
                 scheduler.step()
@@ -136,8 +137,10 @@ def full_training(models : list[nn.Module],
                     best_val_losses[modelid] = total_loss
                     best_epoch[modelid] = epoch
                     torch.save(model.state_dict(), best_path)
-            print('best validation losses so far across full model ensemble:', best_val_losses)
-            print('best epochs so far across full model ensemble:', best_epoch)
+            fmt = lambda a: ' '.join(f'{v:.2g}' for v in a)
+            print('Best val. losses so far for each model:', fmt(best_val_losses))
+            fmt = lambda a: ' '.join(f'{v}' for v in a)
+            print('Best epoch so far for each model:', fmt(best_epoch))
 
         for model, best_path in zip(models, best_model_params_paths):
             model.load_state_dict(torch.load(best_path)) # load best model states

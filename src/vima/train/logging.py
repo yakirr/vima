@@ -95,16 +95,18 @@ class LossLogger:
         info = self.summary.groupby(['epoch', 'batch_num'], as_index=False).mean()
 
         plt.plot(info.loss, label='total loss', alpha=0.5)
-        plt.plot(info.rloss, label='recon. loss', alpha=0.5)
         for modelid in range(self.nmodels):
             toplot = self.summary[self.summary.modelid == modelid]
             plt.scatter(info.index.values, toplot.val_loss.values, marker='x', label='val loss')
         plt.scatter(np.argmin(info.val_loss), info.val_loss.min(), color='red')
-        plt.legend()
+        plt.gca().spines[['top', 'right']].set_visible(False)
+        plt.title('Train. loss (line) & per-model val. loss (Xs)')
         plt.ylim(0.8*np.min(info.loss.values), 1.1*np.percentile(info.loss.values, 95))
         plt.subplot(1,2,2)
         plt.hist(vrlosses, bins=50)
-        plt.title('Reconstruction loss (validation, single model)')
+        plt.title('Reconstruction error (validation, 1 model)')
+        plt.xlabel('Reconstruction loss'); plt.ylabel('#Patches')
+        plt.gca().spines[['top', 'right']].set_visible(False)
         plt.show()
 
         if self.detailed:

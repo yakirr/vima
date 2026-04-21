@@ -22,7 +22,7 @@ class RandomDiscreteRotation:
 
 class PatchCollection(Dataset):
     @staticmethod
-    def choose_patches(samples, patchsize, patchstride, max_frac_empty):
+    def choose_patches(samples, patchsize, patchstride, max_frac_empty, verbose=False):
         patchmeta = []
 
         for s in pb(samples.values()):
@@ -49,13 +49,13 @@ class PatchCollection(Dataset):
         return patchmeta
 
     def __init__(self, samples, patchsize=40, patchstride=10, max_frac_empty=0.8,
-                sid_nums=None, standardize=True, percentile_thresh=99):
+                sid_nums=None, standardize=True, percentile_thresh=99, verbose=False):
         self.samples = samples
-        self.meta = PatchCollection.choose_patches(samples, patchsize, patchstride, max_frac_empty)
+        self.meta = PatchCollection.choose_patches(samples, patchsize, patchstride, max_frac_empty, verbose=verbose)
         self.nmarkers = next(iter(samples.values())).sizes['marker']
 
         self.pytorch_mode()
-        self.__preprocess__(standardize, percentile_thresh, sid_nums=sid_nums)
+        self.__preprocess__(standardize, percentile_thresh, sid_nums=sid_nums, verbose=verbose)
         self.augmentation_off()
 
     @property
@@ -68,33 +68,33 @@ class PatchCollection(Dataset):
 
     def augmentation_on(self):
         if self.dim_order != 'pytorch':
-            print('Data augmentation only available in pytorch mode. Will leave augmentation off')
+            print('WARNING: Data augmentation only available in pytorch mode. Will leave augmentation off')
             return
-        print('data augmentation is on')
+        print('\033[90m[PatchCollection: data augmentation on]\033[0m')
         self.transform = transforms.Compose([
             ToTorch(),
             RandomDiscreteRotation(),
             transforms.RandomHorizontalFlip(),
             ])
     def augmentation_off(self):
-        print('data augmentation is off')
+        print('\033[90m[PatchCollection: data augmentation is off]\033[0m')
         self.transform = transforms.Compose([
             ToTorch(),
             ])
 
     def pytorch_mode(self):
         self.dim_order = 'pytorch'
-        print('in pytorch mode')
+        print('\033[90m[PatchCollection: in pytorch mode]\033[0m')
     def numpy_mode(self):
         self.dim_order = 'numpy'
         self.augmentation_off()
-        print('in numpy mode')
+        print('\033[90m[PatchCollection: in numpy mode]\033[0m')
 
     def subset(self, ix):
         self.patches = self.patches[ix]
         self.meta = self.meta.iloc[ix]
 
-    def __preprocess__(self, standardize, percentile_thresh, sid_nums=None):
+    def __preprocess__(self, standardize, percentile_thresh, sid_nums=None, verbose=False):
         self.patches = np.array([
             self.samples[s].data[y:y+ps,x:x+ps,:]
             for s, x, y, ps in self.meta[['sid','x','y','patchsize']].values
@@ -111,8 +111,11 @@ class PatchCollection(Dataset):
         self.percentiles = np.percentile(np.abs(subset), percentile_thresh, axis=(0,1,2))
         self.vmin = (-self.means - self.percentiles)/self.stds
         self.vmax = (-self.means + self.percentiles)/self.stds
-        print(f'means: {self.means}')
-        print(f'stds: {self.stds}')
+
+        if verbose:
+            fmt = lambda a: '  '.join(f'{v:.2g}' for v in a)
+            print(f'means: {fmt(self.means)}')
+            print(f'stds:  {fmt(self.stds)}')
 
         if standardize:
             self.patches = (self.patches - self.means[None,None,None,:]) / self.stds[None,None,None,:]

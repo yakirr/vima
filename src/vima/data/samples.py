@@ -72,7 +72,7 @@ def plot_sample_with_patches(s, marker, patchmeta, remove_margin=False, ax=None,
     ax.imshow(s.sel(marker=marker).data, **kwargs, cmap='seismic')
     for cnt in contours:
         cnt = cnt.squeeze()  # remove unnecessary dimensions
-        ax.plot(cnt[:, 0], cnt[:, 1], color='red')
+        ax.plot(cnt[:, 0], cnt[:, 1], color='black')
     ax.set_aspect('equal')
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_max, y_min)
@@ -98,4 +98,5 @@ def plot_npatches_per_sample(samples, patchmeta):
     plt.figure(figsize=(15,2))
     plt.bar(x=res.index, height=res)
     plt.tick_params(axis='x', rotation=90)
+    plt.gca().spines[['top', 'right']].set_visible(False)
     plt.show()
