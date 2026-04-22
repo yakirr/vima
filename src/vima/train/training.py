@@ -57,9 +57,9 @@ def train_one_epoch(models : list[nn.Module], train_dataset : Dataset,
     
     print(f'#batches: {len(train_loader)}')
     for n, batch in enumerate(train_loader):
-        # Forward pass
         x, sids = batch
         for modelid, (model, optimizer) in enumerate(zip(models, optimizers)):
+            # Forward pass
             predictions, mean, logvar = model.forward([x, sids])
             rloss = reconstruction_loss(batch, predictions)
             vaeloss = kl_weight * kl_loss(mean, logvar)
