@@ -84,12 +84,9 @@ class LossLogger:
             self.epoch = self.epoch + 1
 
     def print_epoch_log(self, vrlosses, models, val_dataset):
-        display.clear_output()
-        print(f'end of epoch {self.epoch}: avg val loss = {np.array(self.val_losses)[-self.nmodels:].mean()}')
-        print(f'time elapsed this epoch: {time.time() - self.epochstarttime:.2f} sec')
-        print(f'total time elapsed: {time.time() - self.starttime:.2f} sec')
         self.epochstarttime = time.time()
 
+        display.clear_output()
         plt.figure(figsize=(9,3))
         plt.subplot(1,2,1)
         info = self.summary.groupby(['epoch', 'batch_num'], as_index=False).mean()
@@ -115,6 +112,10 @@ class LossLogger:
             examples = (examples[0].permute(0,2,3,1), examples[1])
             v.plot_with_reconstruction(models[0], examples, channels=range(examples[0].shape[-1]),
                                         pmin=self.Pmin, pmax=self.Pmax)
+            
+        print(f'End of epoch {self.epoch}: avg val loss = {np.array(self.val_losses)[-self.nmodels:].mean()}')
+        print(f'Time elapsed this epoch: {time.time() - self.epochstarttime:.2f} sec')
+        print(f'Total time elapsed: {time.time() - self.starttime:.2f} sec')
 
     @property
     def summary(self):
