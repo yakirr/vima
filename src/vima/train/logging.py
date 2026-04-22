@@ -63,12 +63,12 @@ class LossLogger:
         cur_rloss = np.mean(self.rlosses[-self.log_interval*self.nmodels:])
         cur_klloss = np.mean(self.kllosses[-self.log_interval*self.nmodels:])
 
-        print(f'batch {batch_num:5d} | '
+        print(f'\033[90mbatch {batch_num:5d} | '
                 f'lr {lr:.2g} | '
                 f'r-loss {cur_rloss:.2f} | '
                 f'kl-loss {cur_klloss:.2f} | '
                 f'kl-weight {kl_weight:.2e} | '
-                f'time {time_per_batch:.2f} sec')
+                f'time {time_per_batch:.2f} sec\033[0m')
 
     def log_epoch(self, modelid, vlosses, vrlosses, vkllosses, models, val_dataset):
         """Log validation loss."""
@@ -99,6 +99,9 @@ class LossLogger:
         plt.gca().spines[['top', 'right']].set_visible(False)
         plt.title('Train. loss (line) & per-model val. loss (Xs)')
         plt.ylim(0.8*np.min(info.loss.values), 1.1*np.percentile(info.loss.values, 95))
+        plt.xlabel('Batch number')
+        plt.ylabel('Loss')
+        
         plt.subplot(1,2,2)
         plt.hist(vrlosses, bins=50)
         plt.title('Reconstruction error (validation, 1 model)')
@@ -113,9 +116,10 @@ class LossLogger:
             v.plot_with_reconstruction(models[0], examples, channels=range(examples[0].shape[-1]),
                                         pmin=self.Pmin, pmax=self.Pmax)
             
-        print(f'End of epoch {self.epoch}: avg val loss = {np.array(self.val_losses)[-self.nmodels:].mean()}')
-        print(f'Time elapsed this epoch: {time.time() - self.epochstarttime:.2f} sec')
-        print(f'Total time elapsed: {time.time() - self.starttime:.2f} sec')
+        print(f'\033[33m=== End of epoch {self.epoch} ===\033[0m')
+        print(f'Avg. val. loss: \033[32m{np.array(self.val_losses)[-self.nmodels:].mean()}\033[0m')
+        print(f'Time elapsed this epoch: \033[34m{time.time() - self.epochstarttime:.2f} sec\033[0m')
+        print(f'Total time elapsed: \033[34m{time.time() - self.starttime:.2f} sec\033[0m')
 
     @property
     def summary(self):
