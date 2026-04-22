@@ -28,7 +28,7 @@ def visualize_pixels(pixels, ntoplot, input, colorby, include_pca_plot=False):
             sns.scatterplot(x='PC1', y='PC2', hue=metavar, data=toplot, palette='Set1', s=1, legend=False)
             plt.title(metavar)
             plt.show()
-        sc.pl.umap(toplot_ad, color=metavar, legend_loc=None,
+        sc.pl.umap(toplot_ad, color=metavar, legend_loc=None, frameon=False,
                    title=f'pixels UMAPed using {input}, colored by {metavar}')
 
     return toplot_ad
