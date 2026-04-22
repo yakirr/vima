@@ -41,6 +41,10 @@ def prepare(load, filepaths, orig_pixel_size, markers, get_foreground, norm_by_b
     os.makedirs(masksdir, exist_ok=True)
     os.makedirs(normeddir, exist_ok=True)
     
+    if len(filepaths) == 0:
+        print('No files found. Check your filepaths and try again.')
+        return
+
     print('Downsampling...')
     downsample_factor = int(pixel_size//orig_pixel_size)
     for filepath in pb(filepaths):

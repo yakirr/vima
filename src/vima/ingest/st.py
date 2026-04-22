@@ -170,6 +170,10 @@ def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel
 
 def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_top_genes_per_sample, pixel_size, outdir,
                                     genes_to_add=[], plot_mean_var=True, plot_spatial_hvgs=False):
+    if len(filepaths) == 0:
+        print('No files found. Check your filepaths and try again.')
+        return
+
     print('Computing normalization factor...')
     normfactor = med_ntranscripts(load, filepaths, x_col, y_col, pixel_size=pixel_size)
     print('Finding HVGs and dataset-wide mean and variance per gene...')

@@ -401,3 +401,6 @@ demo/RA/_results/models.pt
 # data files
 *.nc
 *.feather
+
+#testing folder
+_testing/
