@@ -121,6 +121,7 @@ def full_training(models : list[nn.Module],
         ]
 
         for epoch in range(1, n_epochs + 1):
+            print(f'Starting epoch {epoch} of {n_epochs}...')
             train_one_epoch(
                 models, train_dataset, generator, optimizers, schedulers, batch_size, log,
                     kl_weight=kl_weight * min(epoch / 5, 1) if kl_warmup else kl_weight)
@@ -141,6 +142,7 @@ def full_training(models : list[nn.Module],
             print('Best val. losses so far for each model:', fmt(best_val_losses))
             fmt = lambda a: ' '.join(f'{v}' for v in a)
             print('Best epoch so far for each model:', fmt(best_epoch))
+            print()
 
         for model, best_path in zip(models, best_model_params_paths):
             model.load_state_dict(torch.load(best_path)) # load best model states
