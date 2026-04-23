@@ -82,10 +82,10 @@ class LossLogger:
             if self.on_epoch_end is not None:
                 self.on_epoch_end(self.epoch, models, val_dataset)
             self.epoch = self.epoch + 1
-
-    def print_epoch_log(self, vrlosses, models, val_dataset):
+        
         self.epochstarttime = time.time()
 
+    def print_epoch_log(self, vrlosses, models, val_dataset):
         display.clear_output()
         plt.figure(figsize=(9,3))
         plt.subplot(1,2,1)
