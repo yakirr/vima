@@ -35,10 +35,10 @@ class PatchCollection(Dataset):
             ]).astype('int')
 
             patchmeta.append(pd.DataFrame([
-                    (s.sid, s.donor, i, j, mask.x[i], mask.y[j])
+                    (s.sid, i, j, mask.x[i], mask.y[j])
                     for i, j in starts
                 ],
-                columns=['sid','donor','x','y', 'x_microns', 'y_microns'],
+                columns=['sid','x','y', 'x_microns', 'y_microns'],
             ))
         patchmeta = pd.concat(patchmeta, axis=0).reset_index(drop=True)
         patchmeta.x = patchmeta.x.astype('int')
@@ -81,6 +81,9 @@ class PatchCollection(Dataset):
         self.transform = transforms.Compose([
             ToTorch(),
             ])
+
+    def add_donor_ids(self, donor_ids_series):
+        self.meta['donor'] = self.meta.sid.map(donor_ids_series)
 
     def pytorch_mode(self):
         self.dim_order = 'pytorch'
