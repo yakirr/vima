@@ -121,9 +121,9 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
     return list(union_hvgs), means.mean(axis=1), stds.mean(axis=1)
 
 def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel_size, target_sum, means, stds,
-                                  genes=None, min_ngenes_per_pixel=5, min_ntranscripts_per_pixel=10, plot_mean_var=True):
+                                  genes, min_ngenes_per_pixel, min_ntranscripts_per_pixel, plots=True):
     print(f'\tNumber of transcripts: {len(data)/1e6:.2f}M')
-    
+
     # process data
     print('\tMaking pixel list...', end='')
     pl = util.transcriptlist_to_pixellist(
@@ -134,14 +134,16 @@ def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel
         pixel_size=pixel_size
     )
     markers = pl.columns[2:]
+    all_x = np.sort(pl['pixel_x'].unique())
+    all_y = np.sort(pl['pixel_y'].unique())
     print(f'{len(pl)} pixels.')
 
-    if plot_mean_var:
+    if plots:
         plt.figure(figsize=(5,5))
         plt.scatter(pl.pixel_x, pl.pixel_y, c='gray', s=0.1, alpha=0.2)
     pl = pl[(pl[markers] != 0).sum(axis=1) >= min_ngenes_per_pixel]
     pl = pl[(pl[markers].sum(axis=1) >= min_ntranscripts_per_pixel) & (pl[list(set(markers) & set(genes))].sum(axis=1) > 0)]
-    if plot_mean_var:
+    if plots:
         plt.scatter(pl.pixel_x, pl.pixel_y, c=pl[markers].sum(axis=1), s=0.1, alpha=0.8, vmin=0, vmax=100)
         plt.gca().set_aspect('equal'); plt.title('transcript density (gray = failed qc)'); plt.axis('off'); plt.show()
     print(f'\t{len(pl)} pixels after QC.')
@@ -153,15 +155,14 @@ def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel
     pl[markers] = (pl - means)[markers]
     pl[markers] = (pl / stds)[markers]
     
-    if genes is not None:
-        print(f'\trestricting to {len(genes)} genes')
-        pl = pl.reindex(columns=['pixel_x', 'pixel_y'] + genes, fill_value=0)
+    print(f'\trestricting to {len(genes)} genes')
+    pl = pl.reindex(columns=['pixel_x', 'pixel_y'] + genes, fill_value=0)
     mask_pl = pl[['pixel_x', 'pixel_y']].copy()
     mask_pl['nonempty'] = 1
     
     print('\tMaking pixel matrix...', end='')
-    s = util.pixellist_to_pixelmatrix(pl, genes)
-    mask = util.pixellist_to_pixelmatrix(mask_pl, ['nonempty']).squeeze().astype(bool)
+    s = util.pixellist_to_pixelmatrix(pl, genes).reindex({'x': all_x, 'y': all_y}, fill_value=0)
+    mask = util.pixellist_to_pixelmatrix(mask_pl, ['nonempty']).squeeze().astype(bool).reindex({'x': all_x, 'y': all_y}, fill_value=False)
     s.name = sid; mask.name = sid
     gc.collect()
     print('done. shape:', s.shape)
@@ -169,6 +170,7 @@ def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel
     return mask, s.astype(np.float32)
 
 def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_top_genes_per_sample, pixel_size, outdir,
+                                    min_ntranscripts_per_pixel, min_ngenes_per_pixel,
                                     genes_to_add=[], plot_mean_var=True, plot_spatial_hvgs=False):
     if len(filepaths) == 0:
         print('No files found. Check your filepaths and try again.')
@@ -180,7 +182,8 @@ def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_t
     hvgs, means, stds = get_sumstats(load, filepaths, normfactor, x_col, y_col, gene_col,
                                      n_top_genes_per_sample=n_top_genes_per_sample,
                                      genes_to_add=genes_to_add, pixel_size=pixel_size, plot_mean_var=plot_mean_var,
-                                     plot_spatial_hvgs=plot_spatial_hvgs)
+                                     plot_spatial_hvgs=plot_spatial_hvgs,
+                                     min_ntranscripts=min_ntranscripts_per_pixel)
     print('Final number of genes used =', len(hvgs))
 
     print('Rasterizing and normalizing...')
@@ -191,23 +194,34 @@ def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_t
     for i, filepath in enumerate(filepaths):
         sid, data = load(filepath)
         print(f'Processing sample {i+1}/{len(filepaths)}: {sid}')
-        mask, pm = transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel_size, normfactor, means, stds, genes=hvgs, plot_mean_var=plot_mean_var)
+        mask, pm = transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel_size,
+                                                       normfactor, means, stds, genes=hvgs, plots=plot_mean_var,
+                                                       min_ntranscripts_per_pixel=min_ntranscripts_per_pixel,
+                                                       min_ngenes_per_pixel=min_ngenes_per_pixel)
         del data; gc.collect()
         util.write_xarray(mask, f'{masksdir}/{pm.name}.nc')
         util.write_xarray(pm, f'{normdir}/{pm.name}.nc')
 
-def prepare_xenium5k(load, filepaths, x_col, y_col, gene_col, n_top_genes_per_sample, outdir, pixel_size=10, genes_to_add=[], plot_mean_var=True, plot_spatial_hvgs=False):
+def prepare_xenium5k(load, filepaths, x_col, y_col, gene_col, n_top_genes_per_sample, outdir,
+                     pixel_size=10, genes_to_add=[], plot_mean_var=True, plot_spatial_hvgs=False,
+                     min_ntranscripts_per_pixel=11, min_ngenes_per_pixel=5):
     rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col,
                                   n_top_genes_per_sample,
                                   pixel_size=pixel_size,
                                   outdir=outdir,
                                   genes_to_add=genes_to_add,
                                   plot_mean_var=plot_mean_var,
-                                  plot_spatial_hvgs=plot_spatial_hvgs)
+                                  plot_spatial_hvgs=plot_spatial_hvgs,
+                                  min_ntranscripts_per_pixel=min_ntranscripts_per_pixel,
+                                  min_ngenes_per_pixel=min_ngenes_per_pixel)
 
-def prepare_merfish(load, filepaths, x_col, y_col, gene_col, outdir, pixel_size=10, plot_mean_var=True):
+def prepare_merfish(load, filepaths, x_col, y_col, gene_col, outdir,
+                    pixel_size=10, plot_mean_var=True,
+                    min_ntranscripts_per_pixel=11, min_ngenes_per_pixel=1):
     rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col,
                                   None,
                                   pixel_size=pixel_size,
                                   outdir=outdir,
-                                  plot_mean_var=plot_mean_var)
+                                  plot_mean_var=plot_mean_var,
+                                  min_ntranscripts_per_pixel=min_ntranscripts_per_pixel,
+                                  min_ngenes_per_pixel=min_ngenes_per_pixel)
