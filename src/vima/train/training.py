@@ -160,7 +160,7 @@ def train_test_split(P, generator, breakdown=[0.8,0.2]):
 
 def train(models, P, kl_weight=1e-5, kl_warmup=True, stop_augmentation=1,
           batch_size=256, n_epochs=20, lr=1e-3, gamma=0.9,
-          plot_reconstructions=False, on_epoch_end=None, seed=0, deterministic=True):
+          plot_reconstructions=False, on_epoch_end=None, seed=0, deterministic=False):
     if seed is not None:
         set_seed(seed, deterministic=deterministic)
     g = torch.Generator(device=torch.get_default_device())
