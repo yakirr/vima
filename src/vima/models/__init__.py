@@ -2,7 +2,7 @@ from .resnet_vae import ResnetVAE
 from .simple_vae import SimpleVAE
 import torch
 
-def cVAE(nmarkers, nsamples, nreps=10, compile_mode=None):
+def cVAE(nmarkers, nsamples, nreps=10, compile_mode='default'):
     if torch.cuda.is_available() and compile_mode is not None:
         return torch.nn.ModuleList([
                 torch.compile(ResnetVAE(nmarkers, nsamples), mode=compile_mode)
