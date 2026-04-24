@@ -53,19 +53,24 @@ def train_one_epoch(models : list[nn.Module], train_dataset : Dataset,
         dataset=train_dataset,
         batch_size=batch_size,
         shuffle=True,
+        drop_last=True,
         generator=generator)
     
     print(f'#batches: {len(train_loader)}')
     for n, batch in enumerate(train_loader):
         x, sids = batch
+        losses = {}
+        
+        # Forward pass
         for modelid, (model, optimizer) in enumerate(zip(models, optimizers)):
-            # Forward pass
             predictions, mean, logvar = model.forward([x, sids])
             rloss = reconstruction_loss(batch, predictions)
             vaeloss = kl_weight * kl_loss(mean, logvar)
-            loss = vaeloss + rloss
+            losses[modelid] = (vaeloss, rloss, vaeloss + rloss)
 
-            # Backward pass
+        # Backward pass
+        for modelid, (model, optimizer) in enumerate(zip(models, optimizers)):
+            vaeloss, rloss, loss = losses[modelid]
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
@@ -86,6 +91,7 @@ def evaluate(model : nn.Module, eval_dataset : Dataset,
         dataset=eval_dataset,
         batch_size=batch_size,
         shuffle=False,
+        drop_last=True,
         generator=generator)
 
     rlosses = []

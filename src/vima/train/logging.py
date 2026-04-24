@@ -84,6 +84,7 @@ class LossLogger:
                 self.on_epoch_end(self.epoch, models, val_dataset)
             self.epoch = self.epoch + 1
             self.epochstarttime = time.time()
+            self.chunkstarttime = time.time()
 
     def print_epoch_log(self, vrlosses, models, val_dataset):
         display.clear_output()
