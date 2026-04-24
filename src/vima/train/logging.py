@@ -104,8 +104,8 @@ class LossLogger:
         
         plt.subplot(1,2,2)
         plt.hist(vrlosses, bins=50)
-        plt.title('Reconstruction error (validation, 1 model)')
-        plt.xlabel('Reconstruction loss'); plt.ylabel('#Patches')
+        plt.title('Error across validation patches (1 model)')
+        plt.xlabel('Reconstruction error'); plt.ylabel('#Patches')
         plt.gca().spines[['top', 'right']].set_visible(False)
         plt.show()
 
@@ -116,7 +116,7 @@ class LossLogger:
             v.plot_with_reconstruction(models[0], examples, channels=range(examples[0].shape[-1]),
                                         pmin=self.Pmin, pmax=self.Pmax)
             
-        print(f'\033[33m=== End of epoch {self.epoch} ===\033[0m')
+        print(f'End of epoch {self.epoch}')
         print(f'Avg. val. loss: \033[32m{np.array(self.val_losses)[-self.nmodels:].mean()}\033[0m')
         print(f'Time elapsed this epoch: \033[34m{time.time() - self.epochstarttime:.2f} sec\033[0m')
         print(f'Total time elapsed: \033[34m{time.time() - self.starttime:.2f} sec\033[0m')
