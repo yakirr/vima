@@ -11,6 +11,25 @@ from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 from . import util, dimreduce
 
+def _lisi_ratio(conn, labels):
+    from scipy.sparse import issparse, diags as sp_diags
+    labels = np.asarray(labels)
+    unique, inv = np.unique(labels, return_inverse=True)
+    n_cats = len(unique)
+    if n_cats < 2:
+        return float('nan')
+    n = conn.shape[0]
+    L = np.zeros((n, n_cats))
+    L[np.arange(n), inv] = 1.0
+    rs = np.asarray(conn.sum(axis=1)).ravel()
+    rs[rs == 0] = 1.0
+    freq = (sp_diags(1.0 / rs) @ conn) @ L
+    if issparse(freq):
+        freq = freq.toarray()
+    mean_lisi = (1.0 / (freq ** 2).sum(axis=1)).mean()
+    global_q = np.bincount(inv).astype(float) / n
+    return mean_lisi, 1.0 / (global_q ** 2).sum()
+
 def visualize_pixels(pixels, ntoplot, input, colorby, include_pca_plot=False):
     pcs = [c for c in pixels.columns if c.startswith('PC')]
     metavars = [c for c in pixels.columns if c not in pcs]
@@ -30,6 +49,15 @@ def visualize_pixels(pixels, ntoplot, input, colorby, include_pca_plot=False):
             plt.show()
         sc.pl.umap(toplot_ad, color=metavar, legend_loc=None, frameon=False,
                    title=f'pixels UMAPed using {input}, colored by {metavar}')
+        
+        # print LISI ratio
+        n_unique = toplot_ad.obs[metavar].nunique()
+        if n_unique < 2 or n_unique > 1000:
+            print(f'Avg LISI ({metavar}): skipped ({n_unique} unique values)')
+        else:
+            lisi, baseline = _lisi_ratio(toplot_ad.obsp['connectivities'], toplot_ad.obs[metavar])
+            print(f'\033[91mAvg LISI ({metavar}): {lisi:.2f}  [{baseline:.2f} = perfect mixing, 1 = not mixed]\033[0m')
+            print()
 
     return toplot_ad
 
