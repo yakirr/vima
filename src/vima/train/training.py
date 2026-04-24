@@ -121,7 +121,7 @@ def full_training(models : list[nn.Module],
         ]
 
         for epoch in range(1, n_epochs + 1):
-            print(f'Starting epoch {epoch} of {n_epochs}...')
+            print(f'\033[33m===  Starting epoch {epoch} of {n_epochs}... ===\033[0m')
             train_one_epoch(
                 models, train_dataset, generator, optimizers, schedulers, batch_size, log,
                     kl_weight=kl_weight * min(epoch / 5, 1) if kl_warmup else kl_weight)
