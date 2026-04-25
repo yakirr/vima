@@ -49,14 +49,24 @@ class PatchCollection(Dataset):
         return patchmeta
 
     def __init__(self, samples, patchsize=40, patchstride=10, max_frac_empty=0.8,
-                sid_nums=None, standardize=True, percentile_thresh=99, verbose=False):
+                standardize=True, percentile_thresh=99, verbose=False):
         self.samples = samples
+        self.patchstride = patchstride
         self.meta = PatchCollection.choose_patches(samples, patchsize, patchstride, max_frac_empty, verbose=verbose)
         self.nmarkers = next(iter(samples.values())).sizes['marker']
 
         self.pytorch_mode()
-        self.__preprocess__(standardize, percentile_thresh, sid_nums=sid_nums, verbose=verbose)
+        self.__preprocess__(standardize, percentile_thresh, verbose=verbose)
         self.augmentation_off()
+
+    def refined(self, max_frac_empty, tol=1e-10):
+        import copy
+        empty_val = -self.means / self.stds
+        empty_frac = (np.abs(self.patches - empty_val[None,None,None,:]).max(axis=-1) < tol).mean(axis=(1, 2))
+        keep = np.where(empty_frac < max_frac_empty)[0]
+        result = copy.copy(self)
+        result.subset(keep)
+        return result
 
     @property
     def sid_nums(self):
@@ -97,15 +107,12 @@ class PatchCollection(Dataset):
         self.patches = self.patches[ix]
         self.meta = self.meta.iloc[ix]
 
-    def __preprocess__(self, standardize, percentile_thresh, sid_nums=None, verbose=False):
+    def __preprocess__(self, standardize, percentile_thresh, verbose=False):
         self.patches = np.array([
             self.samples[s].data[y:y+ps,x:x+ps,:]
             for s, x, y, ps in self.meta[['sid','x','y','patchsize']].values
             ])
-        if sid_nums is None:
-            self.meta['sid_num'] = pd.factorize(self.meta.sid)[0]
-        else:
-            self.meta['sid_num'] = self.meta.sid.map(sid_nums)
+        self.meta['sid_num'] = pd.factorize(self.meta.sid)[0]
 
         ix = np.random.choice(len(self), min(50000, len(self)), replace=False)
         subset = self.patches[ix]

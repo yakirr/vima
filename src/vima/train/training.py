@@ -181,3 +181,8 @@ def train(models, P, kl_weight=1e-5, kl_warmup=True, stop_augmentation=1,
                     kl_weight=kl_weight, kl_warmup=kl_warmup)
     
     return log
+
+def fit(models, P, Pdense, n_epochs_all=10, n_epochs_dense=20, **train_kwargs):
+    log1 = train(models, P, n_epochs=n_epochs_all, **train_kwargs)
+    log2 = train(models, Pdense, n_epochs=n_epochs_dense, **train_kwargs)
+    return log1, log2
