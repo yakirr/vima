@@ -53,13 +53,13 @@ class PatchCollection(Dataset):
                 covariates=None, condition_on_sid=True):
         self.samples = samples
         self.patchstride = patchstride
-        self._condition_on_sid = condition_on_sid
         self._covariate_cols = []
         self.meta = PatchCollection.choose_patches(samples, patchsize, patchstride, max_frac_empty, verbose=verbose)
         self.nmarkers = next(iter(samples.values())).sizes['marker']
 
         self.pytorch_mode()
-        self.__preprocess__(standardize, percentile_thresh, covariates=covariates, verbose=verbose)
+        self.__preprocess__(standardize, percentile_thresh, covariates=covariates,
+                            condition_on_sid=condition_on_sid, verbose=verbose)
         self.augmentation_off()
 
     def refined(self, max_frac_empty, tol=1e-10):
@@ -81,10 +81,7 @@ class PatchCollection(Dataset):
 
     @property
     def covariate_sizes(self):
-        sizes = [self.nsamples] if self._condition_on_sid else []
-        for col in self._covariate_cols:
-            sizes.append(self.meta[col].nunique())
-        return sizes
+        return [self.meta[col].nunique() for col in self._covariate_cols]
 
     def augmentation_on(self):
         if self.dim_order != 'pytorch':
@@ -117,12 +114,14 @@ class PatchCollection(Dataset):
         self.patches = self.patches[ix]
         self.meta = self.meta.iloc[ix]
 
-    def __preprocess__(self, standardize, percentile_thresh, covariates=None, verbose=False):
+    def __preprocess__(self, standardize, percentile_thresh, covariates=None, condition_on_sid=True, verbose=False):
         self.patches = np.array([
             self.samples[s].data[y:y+ps,x:x+ps,:]
             for s, x, y, ps in self.meta[['sid','x','y','patchsize']].values
             ])
         self.meta['sid_num'] = pd.factorize(self.meta.sid)[0]
+        if condition_on_sid:
+            self._covariate_cols.append('sid_num')
         if covariates:
             for name, mapping in covariates.items():
                 col = f'{name}_num'
@@ -145,13 +144,22 @@ class PatchCollection(Dataset):
         if standardize:
             self.patches = (self.patches - self.means[None,None,None,:]) / self.stds[None,None,None,:]
 
+    def __repr__(self):
+        ps = self.meta.patchsize.iloc[0]
+        cov_parts = [f'{col.removesuffix("_num")} ({self.meta[col].nunique()} levels)'
+                     for col in self._covariate_cols]
+        cov_str = ', '.join(cov_parts) if cov_parts else 'none'
+        return (
+            f'PatchCollection object with npatches × width × height × nmarkers = {len(self)}×{ps}×{ps}×{self.nmarkers}\n'
+            f'\tcovariates: {cov_str}'
+        )
+
     def __len__(self):
         return len(self.meta)
 
     def __getitem__(self, idx):
         patches = self.patches[idx]
-        covar_cols = (['sid_num'] if self._condition_on_sid else []) + self._covariate_cols
-        covars = self.meta[covar_cols].values[idx]
+        covars = self.meta[self._covariate_cols].values[idx]
         if self.dim_order == 'numpy':
             return patches, covars
         else:

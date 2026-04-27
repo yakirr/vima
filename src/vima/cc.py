@@ -10,6 +10,7 @@ import scipy.sparse as sp
 import scipy.stats as st
 from argparse import Namespace
 from tqdm import tqdm
+from .fingerprints import Fingerprints
 pb = lambda x: tqdm(x, ncols=100)
 
 def anndata(patchmeta, Z, var_names=None, use_rep='X', n_comps=10, **kwargs):
@@ -51,9 +52,8 @@ def latentreps(models, P, use_rep='X', n_comps=100, **kwargs):
     print('applying models')
     Zs = apply(models, P)
     print('computing nearest-neighbor graphs')
-    return [
-        anndata(P.meta, Z, use_rep=use_rep, n_comps=n_comps, **kwargs)
-        for Z in pb(Zs)]
+    ds = [anndata(P.meta, Z, use_rep=use_rep, n_comps=n_comps, **kwargs) for Z in pb(Zs)]
+    return Fingerprints.from_list(ds)
 
 def _association(MAMresid, M, Nmodels, y, batches, donorids, ks=None, Nnull=1000, show_progress=False):
     # prep data
@@ -109,53 +109,12 @@ def _association(MAMresid, M, Nmodels, y, batches, donorids, ks=None, Nnull=1000
             }
     return Namespace(**res)
 
-def weighted_avg_graph(ds, weights, kept, make_umap=True):
-    M = kept.sum()
-    obs = ds[0].obs.iloc[kept].copy(deep=True)
-    obs.index = obs.index.astype(str)
-    D = sc.AnnData(X=np.random.randn(M, ds[0].X.shape[1]), obs=obs)
-
-    combined = sp.csr_matrix((M, M))
-    combined_dist = sp.csr_matrix((M, M))
-    for d, w in zip(ds, weights):
-        row_scaling = sp.diags(w)
-        combined += row_scaling @ d.obsp['connectivities'][kept, :][:, kept]
-        combined_dist += row_scaling @ d.obsp['distances'][kept, :][:, kept]
-    D.obsp['connectivities'] = combined
-    D.obsp['distances'] = combined_dist
-
-    D.uns['neighbors'] = {
-        'connectivities_key': 'connectivities',
-        'distances_key': 'distances',
-        'params': {
-            'method': 'umap',
-            'metric': 'euclidean',
-            'n_neighbors': 15,
-            'use_rep': 'X',
-            'n_pcs': None,
-        }
-    }
-    if make_umap:
-        sc.tl.umap(D, neighbors_key='neighbors')
-
-    return D
-
-def avg_graph(ds, make_umap=True):
-    return weighted_avg_graph(ds,
-                              np.ones((len(ds), len(ds[0])))/len(ds),
-                              kept=np.array([True]*len(ds[0])),
-                              make_umap=make_umap
-                              )
 
 def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_added='mncoef',
                 return_full=False, ridges=None, Nnull=10000, seed=0, make_umap=True,
                 nsteps=None, show_progress=False, allow_low_sample_size=False,
                 max_num_mns=200000, **kwargs):
     if seed is not None: np.random.seed(seed)
-    
-    # Check that all ds have identical metadata
-    if not all(ds[0].obs.equals(d.obs) for d in ds):
-        raise ValueError("All datasets must have identical metadata (obs).")
 
     # Check formats of inputs and figure out which samples have valid data
     batches, filter_samples = cna.tl._association.check_inputs(ds[0], y, sid_name, batches, covs, donorids, allow_low_sample_size)
@@ -201,7 +160,7 @@ def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_add
     res.kept = kept
     
     # make anndata with results
-    D = weighted_avg_graph(ds, res.weights, kept, make_umap=make_umap)
+    D = ds.weighted_avg_graph(res.weights, kept, make_umap=make_umap)
     if key_added in D.obs:
         warnings.warn(f"Key '{key_added}' already exists in d.obs. Overwriting.")
     D.obs[key_added] = res.mncorrs

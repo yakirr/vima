@@ -9,7 +9,9 @@ from .data.patchcollection import PatchCollection
 from .data.samples import read_samples, reindex_by_sid
 from .train.training import train, fit, set_seed
 from .cc import latentreps, association
+from .fingerprints import Fingerprints
 
 __all__ = ['d', 'cc', 't', 'pp', 'v', 'models',
            'PatchCollection', 'read_samples', 'reindex_by_sid',
-           'train', 'fit', 'set_seed', 'latentreps', 'association', 'cc']
+           'train', 'fit', 'set_seed', 'latentreps', 'association',
+           'Fingerprints', 'cc']
