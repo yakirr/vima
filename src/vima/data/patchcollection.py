@@ -49,9 +49,11 @@ class PatchCollection(Dataset):
         return patchmeta
 
     def __init__(self, samples, patchsize=40, patchstride=10, max_frac_empty=0.8,
-                standardize=True, percentile_thresh=99, verbose=False, covariates=None):
+                standardize=True, percentile_thresh=99, verbose=False,
+                covariates=None, condition_on_sid=True):
         self.samples = samples
         self.patchstride = patchstride
+        self._condition_on_sid = condition_on_sid
         self._covariate_cols = []
         self.meta = PatchCollection.choose_patches(samples, patchsize, patchstride, max_frac_empty, verbose=verbose)
         self.nmarkers = next(iter(samples.values())).sizes['marker']
@@ -79,7 +81,7 @@ class PatchCollection(Dataset):
 
     @property
     def covariate_sizes(self):
-        sizes = [self.nsamples]
+        sizes = [self.nsamples] if self._condition_on_sid else []
         for col in self._covariate_cols:
             sizes.append(self.meta[col].nunique())
         return sizes
@@ -148,7 +150,7 @@ class PatchCollection(Dataset):
 
     def __getitem__(self, idx):
         patches = self.patches[idx]
-        covar_cols = ['sid_num'] + self._covariate_cols
+        covar_cols = (['sid_num'] if self._condition_on_sid else []) + self._covariate_cols
         covars = self.meta[covar_cols].values[idx]
         if self.dim_order == 'numpy':
             return patches, covars
