@@ -10,6 +10,19 @@ from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 from .data import samples as tds
 
+def plot_association(D, key='mncoef', fdr_thresh=0.1, ax=None, show=True, **kwargs):
+    if ax is None:
+        ax = plt.gca()
+    sig = D.obs[key].where(D.obs[f'{key}_fdr'] <= fdr_thresh, 0)
+    D = D.copy()
+    D.obs['_sig'] = sig
+    sc.pl.umap(D, ax=ax, show=False, **kwargs)
+    sc.pl.umap(D[D.obs._sig != 0], color='_sig', cmap='seismic', vmin=-1, vmax=1,
+               ax=ax, title=f'{(D.obs._sig != 0).sum()} microniches at FDR {fdr_thresh*100:.0f}%',
+               show=False, **kwargs)
+    if show:
+        plt.show()
+
 def plot_with_reconstruction(model, examples, show=True, channels=[0,1,2], pmin=None, pmax=None, cmap='seismic'):
     examples = (examples[0].permute(0,3,1,2), examples[1])
     model.eval()
