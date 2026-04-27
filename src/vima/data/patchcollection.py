@@ -49,14 +49,15 @@ class PatchCollection(Dataset):
         return patchmeta
 
     def __init__(self, samples, patchsize=40, patchstride=10, max_frac_empty=0.8,
-                standardize=True, percentile_thresh=99, verbose=False):
+                standardize=True, percentile_thresh=99, verbose=False, covariates=None):
         self.samples = samples
         self.patchstride = patchstride
+        self._covariate_cols = []
         self.meta = PatchCollection.choose_patches(samples, patchsize, patchstride, max_frac_empty, verbose=verbose)
         self.nmarkers = next(iter(samples.values())).sizes['marker']
 
         self.pytorch_mode()
-        self.__preprocess__(standardize, percentile_thresh, verbose=verbose)
+        self.__preprocess__(standardize, percentile_thresh, covariates=covariates, verbose=verbose)
         self.augmentation_off()
 
     def refined(self, max_frac_empty, tol=1e-10):
@@ -75,6 +76,13 @@ class PatchCollection(Dataset):
     @property
     def nsamples(self):
         return len(self.meta.sid.unique())
+
+    @property
+    def covariate_sizes(self):
+        sizes = [self.nsamples]
+        for col in self._covariate_cols:
+            sizes.append(self.meta[col].nunique())
+        return sizes
 
     def augmentation_on(self):
         if self.dim_order != 'pytorch':
@@ -107,12 +115,17 @@ class PatchCollection(Dataset):
         self.patches = self.patches[ix]
         self.meta = self.meta.iloc[ix]
 
-    def __preprocess__(self, standardize, percentile_thresh, verbose=False):
+    def __preprocess__(self, standardize, percentile_thresh, covariates=None, verbose=False):
         self.patches = np.array([
             self.samples[s].data[y:y+ps,x:x+ps,:]
             for s, x, y, ps in self.meta[['sid','x','y','patchsize']].values
             ])
         self.meta['sid_num'] = pd.factorize(self.meta.sid)[0]
+        if covariates:
+            for name, mapping in covariates.items():
+                col = f'{name}_num'
+                self.meta[col] = pd.factorize(self.meta.sid.map(mapping))[0]
+                self._covariate_cols.append(col)
 
         ix = np.random.choice(len(self), min(50000, len(self)), replace=False)
         subset = self.patches[ix]
@@ -135,8 +148,9 @@ class PatchCollection(Dataset):
 
     def __getitem__(self, idx):
         patches = self.patches[idx]
-        sid_nums = self.meta.sid_num.values[idx]
+        covar_cols = ['sid_num'] + self._covariate_cols
+        covars = self.meta[covar_cols].values[idx]
         if self.dim_order == 'numpy':
-            return patches, sid_nums
+            return patches, covars
         else:
-            return self.transform(patches), torch.tensor(sid_nums)
+            return self.transform(patches), torch.tensor(covars, dtype=torch.long)

@@ -19,7 +19,7 @@ class ResnetVAE(VAE):
             of network, 34 layers for default only network and 20 layers for light network. 
     """
 
-    def __init__(self, nmarkers, nsids, network='light', num_layers=18, nlatent=100):
+    def __init__(self, nmarkers, covariate_sizes, network='light', num_layers=18, nlatent=100):
         """Initialize the autoencoder.
 
         Args:
@@ -43,8 +43,8 @@ class ResnetVAE(VAE):
             raise NotImplementedError("Only light network is supported currently.")
         elif self.network == 'light':
             if num_layers==18:
-                self.encoder = enc.LightEncoder(nmarkers, nsids, nlatent, enc.LightBasicBlockEnc, [2, 2, 2]) 
-                self.decoder = dec.LightDecoder(nmarkers, nsids, nlatent, dec.LightBasicBlockDec, [2, 2, 2]) 
+                self.encoder = enc.LightEncoder(nmarkers, covariate_sizes, nlatent, enc.LightBasicBlockEnc, [2, 2, 2])
+                self.decoder = dec.LightDecoder(nmarkers, covariate_sizes, nlatent, dec.LightBasicBlockDec, [2, 2, 2])
             elif num_layers==20:
                 self.encoder = enc.LightEncoder(nmarkers, nlatent, enc.LightBasicBlockEnc, [3, 3, 3]) 
                 self.decoder = dec.LightDecoder(nmarkers, nlatent, dec.LightBasicBlockDec, [3, 3, 3]) 

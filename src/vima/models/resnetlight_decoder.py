@@ -83,7 +83,7 @@ class LightDecoder(nn.Module):
     def __init__(
         self,
         ncolors: int,
-        nsids: int,
+        covariate_sizes: List[int],
         nlatent: int,
         block: Type[LightBasicBlockDec],
         layers: List[int],
@@ -97,10 +97,11 @@ class LightDecoder(nn.Module):
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
 
-        sid_embedding_dim = 4
-        self.sid_embedding = nn.Embedding(nsids, sid_embedding_dim)
+        emb_dim = 4
+        self.embeddings = nn.ModuleList([nn.Embedding(n, emb_dim) for n in covariate_sizes])
+        self.total_emb_dim = emb_dim * len(covariate_sizes)
 
-        self.inplanes = 16+sid_embedding_dim # It should be the shape of the output image CHANEL from the previous layer (layer1).
+        self.inplanes = 16 + self.total_emb_dim
         self.dilation = 1
         self.groups = groups
         self.base_width = width_per_group
@@ -108,11 +109,11 @@ class LightDecoder(nn.Module):
         self.bn1 = norm_layer(ncolors)
         self.relu = nn.ReLU(inplace=True)
 
-        self.layer3 = self._make_layer(block, 64+sid_embedding_dim, layers[2], stride=2, last_block_dim=32)
-        self.layer2 = self._make_layer(block, 32+sid_embedding_dim, layers[1], stride=2, last_block_dim=16)
-        self.layer1 = self._make_layer(block, 16+sid_embedding_dim, layers[0], stride=1 ,output_padding = 0, last_block_dim=16) # NOTE: last_block_dim must be equal with the initila self.inplanes
+        self.layer3 = self._make_layer(block, 64+self.total_emb_dim, layers[2], stride=2, last_block_dim=32)
+        self.layer2 = self._make_layer(block, 32+self.total_emb_dim, layers[1], stride=2, last_block_dim=16)
+        self.layer1 = self._make_layer(block, 16+self.total_emb_dim, layers[0], stride=1, output_padding=0, last_block_dim=16)
 
-        self.layer4 = nn.Sequential(nn.Linear(nlatent+sid_embedding_dim, 64*10*10), nn.Unflatten(dim=1, unflattened_size=(64, 10, 10)))
+        self.layer4 = nn.Sequential(nn.Linear(nlatent+self.total_emb_dim, 64*10*10), nn.Unflatten(dim=1, unflattened_size=(64, 10, 10)))
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -182,9 +183,9 @@ class LightDecoder(nn.Module):
         return nn.Sequential(*layers)
 
     def _forward_impl(self, xs) -> Tensor:
-        x, sid_nums = xs
+        x, covars = xs
 
-        se = self.sid_embedding(sid_nums)
+        se = torch.cat([emb(covars[:, i]) for i, emb in enumerate(self.embeddings)], dim=1)
 
         x = torch.cat((x, se), dim=1)
         x = self.layer4(x)
@@ -205,7 +206,7 @@ class LightDecoder(nn.Module):
         x = torch.cat((x, s), dim=1)
         x = self.de_conv1(x)
         x = self.bn1(x)
-        
+
         return x
 
 
