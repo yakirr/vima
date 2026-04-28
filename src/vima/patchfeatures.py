@@ -13,6 +13,7 @@ def cell_type_counts(
     celltype_col,
     x_col,
     y_col,
+    normalized=True,
     patch_sid_col='sid',
     patch_x_microns_col='x_microns',
     patch_y_microns_col='y_microns',
@@ -28,6 +29,7 @@ def cell_type_counts(
         celltype_col: Column in `cells` giving each cell's type (cast to str).
         x_col: Column in `cells` giving each cell's x coordinate.
         y_col: Column in `cells` giving each cell's y coordinate.
+        normalized: Whether to normalize counts by number of cells and add a totalcells column (default True).
         patch_sid_col: Column in `patch_meta` for sample ID (default 'sid').
         patch_x_col: Column in `patch_meta` for patch origin x (default 'x').
         patch_y_col: Column in `patch_meta` for patch origin y (default 'y').
@@ -64,6 +66,11 @@ def cell_type_counts(
 
         for ct_val in cell_types:
             counts.loc[sid_patches.index, ct_val] += in_patch[:, ct == ct_val].sum(axis=1)
+
+    if normalized:
+        totals = counts.sum(axis=1)
+        counts = counts.div(totals, axis=0)
+        counts['totalcells'] = totals
 
     return counts
 
