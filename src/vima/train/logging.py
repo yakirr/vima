@@ -68,8 +68,7 @@ class LossLogger:
                 f'r-loss {cur_rloss:.2f} | '
                 f'kl-loss {cur_klloss:.2f} | '
                 f'kl-weight {kl_weight:.2e} | '
-                f'{time_per_batch:.2f} sec/batch\033[0m | '
-                f'{(time.time() - self.epochstarttime) / batch_num:.2f} sec/batch on avg')
+                f'{time_per_batch:.2f} sec/batch\033[0m')
 
     def log_epoch(self, modelid, vlosses, vrlosses, vkllosses, models, val_dataset):
         """Log validation loss."""
