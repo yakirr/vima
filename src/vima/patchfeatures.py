@@ -105,6 +105,7 @@ def expression_profiles(
         sample = xr.open_dataarray(os.path.join(directory, f'{sid}.nc')).load()
         marker_names = sample.coords['marker'].values.tolist()
         data = sample.values  # (n_y, n_x, n_markers)
+        mask = ~(data == 0).all(axis=-1)  # (n_y, n_x)
         del sample
 
         if result is None:
@@ -114,12 +115,16 @@ def expression_profiles(
         ys  = sid_patches[patch_y_col].values.astype(int)
         pss = sid_patches[patch_size_in_pixels_col].values.astype(int)
 
-        means = np.array([
-            data[y:y+ps, x:x+ps, :].mean(axis=(0, 1))
+        sums = np.array([
+            data[y:y+ps, x:x+ps, :].sum(axis=(0, 1))
+            for x, y, ps in zip(xs, ys, pss)
+        ])
+        npixels = np.array([
+            mask[y:y+ps, x:x+ps].sum()
             for x, y, ps in zip(xs, ys, pss)
         ])
 
-        result.loc[sid_patches.index] = means
+        result.loc[sid_patches.index] = sums / npixels[:, None]
         del data
 
     return result
@@ -213,10 +218,16 @@ def test_features(
     pval      = ((np.abs(null_diff) >= np.abs(obs_diff)).sum(axis=0) + 1) / (n_perms + 1)
     pval_bonf = np.minimum(pval * X.shape[1], 1.0)
 
-    return pd.DataFrame({
+    result = pd.DataFrame({
         'median_a': median_a_raw,
         'median_b': median_b_raw,
         'diff':     median_a_raw - median_b_raw,
         'pval':     pval,
         'pval_bonf': pval_bonf,
-    }, index=features.columns).sort_values('diff', ascending=False)
+    }, index=features.columns)
+
+    if (X < 0).any():
+        result['enrichment'] = (result.median_a + 1e-9) / (result.median_b + 1e-9)
+        result['log2fc'] = np.log2(result.enrichment)
+    
+    return result.sort_values('pval', ascending=True)
