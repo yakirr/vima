@@ -146,7 +146,7 @@ class PatchCollection(Dataset):
 
     def __repr__(self):
         ps = self.meta.patchsize.iloc[0]
-        cov_parts = [f'{col.removesuffix("_num")} ({self.meta[col].nunique()} levels)'
+        cov_parts = [f'{col.removesuffix("_num")} ({self.meta[col].nunique()} values)'
                      for col in self._covariate_cols]
         cov_str = ', '.join(cov_parts) if cov_parts else 'none'
         return (
