@@ -125,7 +125,7 @@ def expression_profiles(
     return result
 
 
-def diff_features(
+def test_features(
     features,
     group_a,
     group_b=None,

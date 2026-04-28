@@ -191,7 +191,7 @@ def plot_patches_fourcolors(examples, nx=5, ny=5,
 
     plot_patches_overlaychannels(examples, colormaps, nx=nx, ny=ny, show=show)
 
-def diff_markers(
+def plot_features(
     features,
     group_a,
     group_b=None,
