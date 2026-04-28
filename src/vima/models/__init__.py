@@ -12,7 +12,7 @@ def cVAE(nmarkers, covariate_sizes, nreps=10, compile_mode='default', weights=No
                 ResnetVAE(nmarkers, covariate_sizes)
             for _ in range(nreps)])
     if weights is not None:
-        models.load_state_dict(torch.load(weights))
+        models.load_state_dict(torch.load(weights), weights_only=True)
     return models
 
 __all__ = ["ResnetVAE", "SimpleVAE"]

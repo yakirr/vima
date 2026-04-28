@@ -88,9 +88,9 @@ class Fingerprints:
         X = np.hstack([self._adata.obsm[f'X_{i}'] for i in range(len(self))])
         return ad.AnnData(X=X, obs=self._adata.obs.copy())
 
-    def write(self, path):
+    def write_h5ad(self, path):
         self._adata.write_h5ad(path)
 
     @classmethod
-    def read(cls, path):
+    def read_h5ad(cls, path):
         return cls(ad.read_h5ad(path))
