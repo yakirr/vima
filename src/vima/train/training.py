@@ -151,7 +151,7 @@ def full_training(models : list[nn.Module],
             print()
 
         for model, best_path in zip(models, best_model_params_paths):
-            model.load_state_dict(torch.load(best_path)) # load best model states
+            model.load_state_dict(torch.load(best_path), weights_only=True) # load best model states
 
 def train_test_split(P, generator, breakdown=[0.8,0.2]):
     P.pytorch_mode()
