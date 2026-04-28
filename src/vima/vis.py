@@ -1,3 +1,4 @@
+from matplotlib import markers
 import matplotlib.pyplot as plt
 import numpy as np
 import scanpy as sc
@@ -227,17 +228,16 @@ def plot_features(
     if labels is None:
         labels = ['a', 'b']
 
+    if markers is not None:
+            features = features[markers]
+
     group_a = np.asarray(group_a, dtype=bool)
     group_b = ~group_a if group_b is None else np.asarray(group_b, dtype=bool)
-
     diffs = (features[group_a].median() - features[group_b].median()).sort_values(ascending=False)
 
-    if markers is not None:
-        toplot = list(markers)
-    else:
-        toplot = list(diffs.index[:n_top])
-        if n_bottom > 0:
-            toplot = toplot + list(diffs.index[-n_bottom:])
+    toplot = list(diffs.index[:n_top])
+    if n_bottom > 0:
+        toplot = toplot + list(diffs.index[-n_bottom:])
 
     mask = group_a | group_b
     df = features.loc[mask, toplot].copy()

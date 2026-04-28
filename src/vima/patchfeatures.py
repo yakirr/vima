@@ -226,7 +226,7 @@ def test_features(
         'pval_bonf': pval_bonf,
     }, index=features.columns)
 
-    if (X < 0).any():
+    if (X >= 0).all():
         result['enrichment'] = (result.median_a + 1e-9) / (result.median_b + 1e-9)
         result['log2fc'] = np.log2(result.enrichment)
     
