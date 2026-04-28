@@ -3,8 +3,8 @@ import numpy as np
 import cv2 as cv2
 import xarray as xr
 from . import util
-from tqdm import tqdm
 from skimage.filters import threshold_otsu
+from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 
 def foreground_mask_codex(s, real_markers, blur_width=5):

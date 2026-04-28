@@ -5,7 +5,6 @@ import cv2
 import torch
 import xarray as xr
 import seaborn as sns
-import pandas as pd
 from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 from .data import samples as tds
@@ -192,33 +191,65 @@ def plot_patches_fourcolors(examples, nx=5, ny=5,
 
     plot_patches_overlaychannels(examples, colormaps, nx=nx, ny=ny, show=show)
 
-def diff_markers(patch_avgs, pos_set, neg_set, markernames, labels=['T','F'], nmarkers=10,
-        bothends=False, ascending=False, sort=True, ax=None, show=True, **kwargs):
+def diff_markers(
+    features,
+    group_a,
+    group_b=None,
+    n_top=10,
+    n_bottom=0,
+    markers=None,
+    labels=None,
+    kind='violin',
+    ax=None,
+    show=True,
+    **kwargs,
+):
+    """Plot comparing marker distributions between two patch groups.
+
+    Args:
+        features: DataFrame (n_patches × n_markers), e.g. from expression_profiles.
+        group_a: boolean array, length n_patches — first group.
+        group_b: boolean array or None — second group; defaults to ~group_a.
+        n_top: markers most enriched in group_a to show (default 10).
+        n_bottom: markers most enriched in group_b to show (default 0).
+        markers: explicit list of markers to plot; overrides n_top/n_bottom.
+        labels: [label_a, label_b] for the legend; defaults to ['a', 'b'].
+        ax: matplotlib axes; defaults to current axes.
+        show: call plt.show() when done (default True).
+        kind: type of plot to create ('violin' or 'box').
+        **kwargs: additional arguments passed to seaborn plotting function.
+
+    Returns:
+        List of markers plotted, in display order.
+    """
     if ax is None:
         ax = plt.gca()
+    if labels is None:
+        labels = ['a', 'b']
 
-    marker_diffs = pd.DataFrame(index=markernames, columns=['diff'])
-    for m in markernames:
-        marker_diffs.loc[m, 'diff'] = patch_avgs.loc[pos_set, m].median() -  patch_avgs.loc[neg_set, m].median()
-    
-    if sort:
-        marker_diffs = marker_diffs.sort_values(by='diff', ascending=ascending)
-        if bothends:
-            toplot = np.concatenate([marker_diffs[:nmarkers].index.values, marker_diffs[-nmarkers:].index.values])
-        else:
-            toplot = marker_diffs[:nmarkers].index.values
+    group_a = np.asarray(group_a, dtype=bool)
+    group_b = ~group_a if group_b is None else np.asarray(group_b, dtype=bool)
+
+    diffs = (features[group_a].median() - features[group_b].median()).sort_values(ascending=False)
+
+    if markers is not None:
+        toplot = list(markers)
     else:
-        toplot = marker_diffs.index.values
-    df = pd.melt(patch_avgs, value_vars=toplot,
-                 var_name='marker', value_name='value', ignore_index=False)
-    df.loc[pos_set, 'status'] = labels[0]
-    df.loc[neg_set, 'status'] = labels[1]
-    df = df.reset_index(drop=True)
-    sns.violinplot(data=df, x='marker', y='value', hue='status', ax=ax, **kwargs)
+        toplot = list(diffs.index[:n_top])
+        if n_bottom > 0:
+            toplot = toplot + list(diffs.index[-n_bottom:])
+
+    mask = group_a | group_b
+    df = features.loc[mask, toplot].copy()
+    df['status'] = np.where(group_a[mask], labels[0], labels[1])
+    df = df.melt(id_vars='status', value_vars=toplot, var_name='marker', value_name='value')
+
+    plot_fn = {'violin': sns.violinplot, 'box': sns.boxplot}.get(kind)
+    if plot_fn is None:
+        raise ValueError(f'kind must be "violin" or "box"; got {kind!r}')
+    plot_fn(data=df, x='marker', y='value', hue='status', order=toplot, ax=ax, **kwargs)
     if show:
         plt.show()
-
-    return marker_diffs[:nmarkers].index.values, marker_diffs.iloc[-nmarkers:].index.values, df
 
 def spatialplot(samples, sortkey, allpatches, scores, rgbs=[[1.,0.,0.]],
         labels=None,
