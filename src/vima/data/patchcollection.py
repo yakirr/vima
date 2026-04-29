@@ -47,6 +47,38 @@ class PatchCollection(Dataset):
         patchmeta.y_microns = patchmeta.y_microns.astype('float32')
         patchmeta['patchsize'] = patchsize
         return patchmeta
+    
+    def make_patchmeta(self, covariates=None, condition_on_sid=True):
+        self.patches = np.array([
+            self.samples[s].data[y:y+ps,x:x+ps,:]
+            for s, x, y, ps in self.meta[['sid','x','y','patchsize']].values
+            ])
+        self.meta['sid_num'] = pd.factorize(self.meta.sid)[0]
+        if condition_on_sid:
+            self._covariate_cols.append('sid_num')
+        if covariates:
+            for name, mapping in covariates.items():
+                col = f'{name}_num'
+                self.meta[col] = pd.factorize(self.meta.sid.map(mapping))[0]
+                self._covariate_cols.append(col)
+
+    def compute_stats(self, percentile_thresh, verbose=False):
+        ix = np.random.choice(len(self), min(50000, len(self)), replace=False)
+        subset = self.patches[ix]
+        self.means = subset.mean(axis=(0,1,2), dtype=np.float64)
+        self.stds = subset.std(axis=(0,1,2), dtype=np.float64)
+        self.percentiles = np.percentile(np.abs(subset), percentile_thresh, axis=(0,1,2))
+        self.vmin = (-self.means - self.percentiles)/self.stds
+        self.vmax = (-self.means + self.percentiles)/self.stds
+
+        if verbose:
+            fmt = lambda a: '  '.join(f'{v:.2g}' for v in a)
+            print(f'per-channel means: {fmt(self.means)}')
+            print(f'per-channel stds:  {fmt(self.stds)}')
+
+    def standardize(self, verbose=False):
+        if verbose: print('Standardizing patches...')
+        self.patches = (self.patches - self.means[None,None,None,:]) / self.stds[None,None,None,:]
 
     def __init__(self, samples, patchsize=40, patchstride=10, max_frac_empty=0.8,
                 standardize=True, percentile_thresh=99, verbose=False,
@@ -58,17 +90,23 @@ class PatchCollection(Dataset):
         self.nmarkers = next(iter(samples.values())).sizes['marker']
 
         self.pytorch_mode()
-        self.__preprocess__(standardize, percentile_thresh, covariates=covariates,
-                            condition_on_sid=condition_on_sid, verbose=verbose)
+        self.make_patchmeta(covariates=covariates, condition_on_sid=condition_on_sid)
+        self.compute_stats(percentile_thresh, verbose=verbose)
+        if standardize:
+            self.standardize(verbose=verbose)
         self.augmentation_off()
 
-    def refined(self, max_frac_empty, tol=1e-10):
+    def refined(self, max_frac_empty, tol=1e-10, standardize=True, percentile_thresh=99,
+                verbose=False):
         import copy
         empty_val = -self.means / self.stds
         empty_frac = (np.abs(self.patches - empty_val[None,None,None,:]).max(axis=-1) < tol).mean(axis=(1, 2))
         keep = np.where(empty_frac < max_frac_empty)[0]
         result = copy.copy(self)
         result.subset(keep)
+        result.compute_stats(percentile_thresh, verbose=verbose)
+        if standardize:
+            result.standardize(verbose=verbose)
         return result
 
     @property
@@ -113,36 +151,6 @@ class PatchCollection(Dataset):
     def subset(self, ix):
         self.patches = self.patches[ix]
         self.meta = self.meta.iloc[ix]
-
-    def __preprocess__(self, standardize, percentile_thresh, covariates=None, condition_on_sid=True, verbose=False):
-        self.patches = np.array([
-            self.samples[s].data[y:y+ps,x:x+ps,:]
-            for s, x, y, ps in self.meta[['sid','x','y','patchsize']].values
-            ])
-        self.meta['sid_num'] = pd.factorize(self.meta.sid)[0]
-        if condition_on_sid:
-            self._covariate_cols.append('sid_num')
-        if covariates:
-            for name, mapping in covariates.items():
-                col = f'{name}_num'
-                self.meta[col] = pd.factorize(self.meta.sid.map(mapping))[0]
-                self._covariate_cols.append(col)
-
-        ix = np.random.choice(len(self), min(50000, len(self)), replace=False)
-        subset = self.patches[ix]
-        self.means = subset.mean(axis=(0,1,2))
-        self.stds = subset.std(axis=(0,1,2))
-        self.percentiles = np.percentile(np.abs(subset), percentile_thresh, axis=(0,1,2))
-        self.vmin = (-self.means - self.percentiles)/self.stds
-        self.vmax = (-self.means + self.percentiles)/self.stds
-
-        if verbose:
-            fmt = lambda a: '  '.join(f'{v:.2g}' for v in a)
-            print(f'means: {fmt(self.means)}')
-            print(f'stds:  {fmt(self.stds)}')
-
-        if standardize:
-            self.patches = (self.patches - self.means[None,None,None,:]) / self.stds[None,None,None,:]
 
     def __repr__(self):
         ps = self.meta.patchsize.iloc[0]
