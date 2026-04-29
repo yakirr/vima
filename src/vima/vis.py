@@ -247,7 +247,9 @@ def plot_features(
     plot_fn = {'violin': sns.violinplot, 'box': sns.boxplot}.get(kind)
     if plot_fn is None:
         raise ValueError(f'kind must be "violin" or "box"; got {kind!r}')
-    plot_fn(data=df, x='marker', y='value', hue='status', order=toplot, ax=ax, **kwargs)
+    plot_kwargs = {'split': True, 'density_norm': 'count', 'inner': 'quart'} if kind == 'violin' else {}
+    plot_kwargs.update(kwargs)
+    plot_fn(data=df, x='marker', y='value', hue='status', order=toplot, ax=ax, **plot_kwargs)
     if show:
         plt.show()
 
