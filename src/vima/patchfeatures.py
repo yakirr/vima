@@ -192,8 +192,11 @@ def test_features(
     group_a  = _align(group_a, 'group_a').astype(bool)
     group_b  = ~group_a if group_b is None else _align(group_b, 'group_b').astype(bool)
     donors   = _align(perm_key, 'perm_key')
-
     X = features.values.astype(float)
+
+    print(f'Comparing {group_a.sum()} patches (Group A) to {group_b.sum()} patches (Group B).')
+    if group_a.sum() == 0 or group_b.sum() == 0:
+        raise ValueError('Each group must have at least one patch')
 
     median_a_raw = np.median(X[group_a], axis=0)
     median_b_raw = np.median(X[group_b], axis=0)
