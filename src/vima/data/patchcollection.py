@@ -65,8 +65,8 @@ class PatchCollection(Dataset):
     def compute_stats(self, percentile_thresh, verbose=False):
         ix = np.random.choice(len(self), min(50000, len(self)), replace=False)
         subset = self.patches[ix]
-        self.means = subset.mean(axis=(0,1,2), dtype=np.float64)
-        self.stds = subset.std(axis=(0,1,2), dtype=np.float64)
+        self.means = subset.mean(axis=(0,1,2), dtype=np.float64).astype(np.float32)
+        self.stds = subset.std(axis=(0,1,2), dtype=np.float64).astype(np.float32)
         self.percentiles = np.percentile(np.abs(subset), percentile_thresh, axis=(0,1,2))
         self.vmin = (-self.means - self.percentiles)/self.stds
         self.vmax = (-self.means + self.percentiles)/self.stds
