@@ -69,7 +69,7 @@ def cell_type_counts(
 
     if normalized:
         totals = counts.sum(axis=1)
-        counts = counts.div(totals, axis=0)
+        counts = counts.div(totals, axis=0).fillna(0)
         counts['totalcells'] = totals
 
     return counts
@@ -176,29 +176,39 @@ def test_features(
             f'method must be "mean", "mean_of_medians", or "mean_of_ranks"; got {method!r}'
         )
 
-    rng     = np.random.default_rng(seed)
-    group_a = np.asarray(group_a, dtype=bool)
-    group_b = ~group_a if group_b is None else np.asarray(group_b, dtype=bool)
-    donors  = np.asarray(perm_key)
+    rng = np.random.default_rng(seed)
+
+    def _align(s, name):
+        if not isinstance(s, pd.Series):
+            raise TypeError(f'{name} must be a pandas Series')
+        missing = features.index.difference(s.index)
+        extra   = s.index.difference(features.index)
+        if len(missing) or len(extra):
+            raise ValueError(
+                f'{name} index does not match features.index: '
+                f'{len(missing)} missing, {len(extra)} extra label(s)')
+        return s.reindex(features.index).to_numpy()
+
+    group_a  = _align(group_a, 'group_a').astype(bool)
+    group_b  = ~group_a if group_b is None else _align(group_b, 'group_b').astype(bool)
+    donors   = _align(perm_key, 'perm_key')
 
     X = features.values.astype(float)
 
-    # Raw means always used for output columns, regardless of method
     median_a_raw = np.median(X[group_a], axis=0)
     median_b_raw = np.median(X[group_b], axis=0)
-
-    unique_donors = np.unique(donors)
-    n_donors      = len(unique_donors)
 
     if method == 'mean_of_ranks':
         X = rankdata(X, axis=0, nan_policy='raise')
 
-    sum_a   = X[group_a].sum(axis=0)
-    sum_b   = X[group_b].sum(axis=0)
-    count_a = float(group_a.sum())
-    count_b = float(group_b.sum())
+    sum_a    = X[group_a].sum(axis=0)
+    sum_b    = X[group_b].sum(axis=0)
+    count_a  = float(group_a.sum())
+    count_b  = float(group_b.sum())
     obs_diff = sum_a / count_a - sum_b / count_b
 
+    unique_donors = np.unique(donors)
+    n_donors      = len(unique_donors)
     da_sum   = np.zeros((n_donors, X.shape[1]))
     db_sum   = np.zeros((n_donors, X.shape[1]))
     da_count = np.zeros(n_donors)
@@ -223,18 +233,18 @@ def test_features(
     null_diff = sum_a_null / count_a_null[:, None] - sum_b_null / count_b_null[:, None]
 
     pval      = ((np.abs(null_diff) >= np.abs(obs_diff)).sum(axis=0) + 1) / (n_perms + 1)
-    pval_bonf = np.minimum(pval * X.shape[1], 1.0)
+    pval_bonf = np.minimum(pval * len(features.columns), 1.0)
 
     result = pd.DataFrame({
         'median_a': median_a_raw,
         'median_b': median_b_raw,
         'diff':     median_a_raw - median_b_raw,
-        'pval':     pval,
-        'pval_bonf': pval_bonf,
     }, index=features.columns)
 
-    if (X >= 0).all():
+    if (features.values >= 0).all():
         result['enrichment'] = (result.median_a + 1e-9) / (result.median_b + 1e-9)
         result['log2fc'] = np.log2(result.enrichment)
-    
+
+    result['pval'] = pval
+
     return result.sort_values('pval', ascending=True)
