@@ -109,9 +109,19 @@ samplemeta.to_csv(samplemeta_path, sep='\t', index=False)
 print(f'\nSaved samplemeta → {samplemeta_path}')
 
 # zip the transcript files for easy upload/download later
+print('Zipping...')
 import tarfile
 archive = os.path.join(HERE, 'ST_raw.tar.gz')
 print(f'\nArchiving {OUT_DIR} → {archive}')
 with tarfile.open(archive, 'w:gz') as tar:
     tar.add(OUT_DIR, arcname='data/raw')
+
+# Write filtered cell metadata for the selected samples
+kept_sids = set(samples.sid)
+cells_out = cells[cells.sid.isin(kept_sids)][['sid', 'x', 'y', 'subclass_name']].copy()
+cells_out.index.name = 'cell_id'
+cells_path = os.path.join(os.path.dirname(OUT_DIR), 'cells.tsv')
+cells_out.to_csv(cells_path, sep='\t')
+print(f'Saved cells → {cells_path}')
+
 print('Done.')
