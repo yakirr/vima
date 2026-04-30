@@ -2,7 +2,7 @@ from matplotlib import markers
 import matplotlib.pyplot as plt
 import numpy as np
 import scanpy as sc
-import cv2
+import pandas as pd
 import torch
 import xarray as xr
 import seaborn as sns
@@ -192,6 +192,18 @@ def plot_patches_fourcolors(examples, nx=5, ny=5,
 
     plot_patches_overlaychannels(examples, colormaps, nx=nx, ny=ny, show=show)
 
+def _select_features(features, group_a, group_b, n_top, n_bottom, markers):
+    if markers is not None:
+        features = features[markers]
+    group_a = np.asarray(group_a, dtype=bool)
+    group_b = ~group_a if group_b is None else np.asarray(group_b, dtype=bool)
+    diffs = (features[group_a].median() - features[group_b].median()).sort_values(ascending=False)
+    toplot = list(diffs.index[:n_top])
+    if n_bottom > 0:
+        toplot = toplot + list(diffs.index[-n_bottom:])
+    return features, group_a, group_b, toplot
+
+
 def plot_features(
     features,
     group_a,
@@ -205,39 +217,28 @@ def plot_features(
     show=True,
     **kwargs,
 ):
-    """Plot comparing marker distributions between two patch groups.
+    """Plot patch-level feature distributions between two groups.
 
     Args:
-        features: DataFrame (n_patches × n_markers), e.g. from expression_profiles.
+        features: DataFrame (n_patches × n_features).
         group_a: boolean array, length n_patches — first group.
         group_b: boolean array or None — second group; defaults to ~group_a.
-        n_top: markers most enriched in group_a to show (default 10).
-        n_bottom: markers most enriched in group_b to show (default 0).
-        markers: explicit list of markers to plot; overrides n_top/n_bottom.
+        n_top: features most enriched in group_a to show (default 10).
+        n_bottom: features most enriched in group_b to show (default 0).
+        markers: explicit list of features to plot; overrides n_top/n_bottom.
         labels: [label_a, label_b] for the legend; defaults to ['a', 'b'].
+        kind: 'violin' (default) or 'box'.
         ax: matplotlib axes; defaults to current axes.
         show: call plt.show() when done (default True).
-        kind: type of plot to create ('violin' or 'box').
-        **kwargs: additional arguments passed to seaborn plotting function.
-
-    Returns:
-        List of markers plotted, in display order.
+        **kwargs: additional arguments passed to the seaborn plotting function.
     """
     if ax is None:
         ax = plt.gca()
     if labels is None:
         labels = ['a', 'b']
 
-    if markers is not None:
-            features = features[markers]
-
-    group_a = np.asarray(group_a, dtype=bool)
-    group_b = ~group_a if group_b is None else np.asarray(group_b, dtype=bool)
-    diffs = (features[group_a].median() - features[group_b].median()).sort_values(ascending=False)
-
-    toplot = list(diffs.index[:n_top])
-    if n_bottom > 0:
-        toplot = toplot + list(diffs.index[-n_bottom:])
+    features, group_a, group_b, toplot = _select_features(
+        features, group_a, group_b, n_top, n_bottom, markers)
 
     mask = group_a | group_b
     df = features.loc[mask, toplot].copy()
@@ -250,6 +251,77 @@ def plot_features(
     plot_kwargs = {'split': True, 'density_norm': 'count', 'inner': 'quart'} if kind == 'violin' else {}
     plot_kwargs.update(kwargs)
     plot_fn(data=df, x='marker', y='value', hue='status', order=toplot, ax=ax, **plot_kwargs)
+    if show:
+        plt.show()
+
+
+def plot_features_by_sample(
+    features,
+    group_a,
+    group_b=None,
+    *,
+    sample_key,
+    n_top=10,
+    n_bottom=0,
+    markers=None,
+    labels=None,
+    ax=None,
+    show=True,
+    connect=True,
+    **kwargs,
+):
+    """Plot sample-averaged feature values between two groups as a swarmplot.
+
+    Each dot is one sample's mean feature value across its patches in that group.
+    Samples with no patches in a group contribute NaN and are omitted for that group.
+
+    Args:
+        features: DataFrame (n_patches × n_features).
+        group_a: boolean array, length n_patches — first group.
+        group_b: boolean array or None — second group; defaults to ~group_a.
+        sample_key: Series aligned with features mapping each patch to its sample ID.
+        n_top: features most enriched in group_a to show (default 10).
+        n_bottom: features most enriched in group_b to show (default 0).
+        markers: explicit list of features to plot; overrides n_top/n_bottom.
+        labels: [label_a, label_b] for the legend; defaults to ['a', 'b'].
+        ax: matplotlib axes; defaults to current axes.
+        show: call plt.show() when done (default True).
+        connect: draw lines connecting paired samples across groups (default True).
+        **kwargs: additional arguments passed to sns.swarmplot.
+    """
+    if ax is None:
+        ax = plt.gca()
+    if labels is None:
+        labels = ['a', 'b']
+
+    features, group_a, group_b, toplot = _select_features(
+        features, group_a, group_b, n_top, n_bottom, markers)
+
+    means_a = features[group_a].groupby(sample_key[group_a]).mean()[toplot]
+    means_b = features[group_b].groupby(sample_key[group_b]).mean()[toplot]
+    print(features[group_a].groupby(sample_key[group_a]).aggregate('count'))
+
+    ma = means_a.copy(); ma['_group'] = labels[0]
+    mb = means_b.copy(); mb['_group'] = labels[1]
+    df = pd.concat([ma, mb]).melt(
+        id_vars='_group', value_vars=toplot, var_name='feature', value_name='value')
+
+    sns.swarmplot(data=df, x='feature', y='value', hue='_group',
+                  dodge=True, order=toplot, ax=ax, **kwargs)
+
+    if connect:
+        # seaborn places dodged groups at ±0.2 from each integer x position
+        dodge = 0.2
+        common = means_a.index.intersection(means_b.index)
+        for fi, feat in enumerate(toplot):
+            for sid in common:
+                va = means_a.loc[sid, feat] if sid in means_a.index else np.nan
+                vb = means_b.loc[sid, feat] if sid in means_b.index else np.nan
+                if np.isnan(va) or np.isnan(vb):
+                    continue
+                ax.plot([fi - dodge, fi + dodge], [va, vb],
+                        color='gray', alpha=0.4, lw=0.8, zorder=0)
+
     if show:
         plt.show()
 

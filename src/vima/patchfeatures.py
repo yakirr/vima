@@ -146,6 +146,7 @@ def test_features(
     method='mean_of_ranks',
     n_perms=100000,
     seed=None,
+    corr_method='benjamini-hochberg',
 ):
     """Compare feature distributions between two patch groups via donor-level permutation.
 
@@ -160,20 +161,24 @@ def test_features(
         perm_key: array-like of donor/sample IDs aligned with features rows. Permutations
                   flip labels at the level of unique values in perm_key.
         method: test statistic to use —
-                'mean'             global mean difference,
                 'mean_of_ranks'    mean rank difference (Wilcoxon/AUC equivalent, default),
                 'mean_of_medians'  mean of per-donor median differences; only donors
                                    with patches in both groups contribute.
         n_perms: number of permutations (default 100000).
         seed: random seed for reproducibility.
+        corr_method: multiple-testing correction — 'benjamini-hochberg' (default) or 'bonferroni'.
 
     Returns:
-        DataFrame indexed by feature name, columns: median_a, median_b, diff, pval,
-        pval_bonf. diff = median_a - median_b. Sorted by diff descending.
+        DataFrame indexed by feature name, columns: median_a, median_b, diff, pvals,
+        pvals_adj. diff = median_a - median_b. Sorted by pvals ascending.
     """
-    if method not in ('mean', 'mean_of_medians', 'mean_of_ranks'):
+    if method not in ('mean_of_medians', 'mean_of_ranks'):
         raise ValueError(
-            f'method must be "mean", "mean_of_medians", or "mean_of_ranks"; got {method!r}'
+            f'method must be "mean_of_medians", or "mean_of_ranks"; got {method!r}'
+        )
+    if corr_method not in ('benjamini-hochberg', 'bonferroni'):
+        raise ValueError(
+            f'corr_method must be "benjamini-hochberg" or "bonferroni"; got {corr_method!r}'
         )
 
     rng = np.random.default_rng(seed)
@@ -235,19 +240,35 @@ def test_features(
     count_b_null = np.maximum(count_b_null, 1.0)
     null_diff = sum_a_null / count_a_null[:, None] - sum_b_null / count_b_null[:, None]
 
-    pval      = ((np.abs(null_diff) >= np.abs(obs_diff)).sum(axis=0) + 1) / (n_perms + 1)
-    pval_bonf = np.minimum(pval * len(features.columns), 1.0)
+    pvals = ((np.abs(null_diff) >= np.abs(obs_diff)).sum(axis=0) + 1) / (n_perms + 1)
 
-    result = pd.DataFrame({
-        'median_a': median_a_raw,
-        'median_b': median_b_raw,
-        'diff':     median_a_raw - median_b_raw,
-    }, index=features.columns)
+    if corr_method == 'benjamini-hochberg':
+        from statsmodels.stats.multitest import multipletests
+        _, pvals_adj, _, _ = multipletests(pvals, method='fdr_bh')
+    else:
+        pvals_adj = np.minimum(pvals * len(features.columns), 1.0)
 
-    if (features.values >= 0).all():
-        result['enrichment'] = (result.median_a + 1e-9) / (result.median_b + 1e-9)
-        result['log2fc'] = np.log2(result.enrichment)
+    nonneg = (features.values >= 0).all()
 
-    result['pval'] = pval
+    if nonneg:
+        mean_a = features.values[group_a].mean(axis=0)
+        mean_b = features.values[group_b].mean(axis=0)
+        result = pd.DataFrame({
+            'median_a':          median_a_raw,
+            'median_b':          median_b_raw,
+            'mean_a':      mean_a,
+            'mean_b':      mean_b,
+            'log2fc':            np.log2((median_a_raw + 1e-9) / (median_b_raw + 1e-9)),
+            'log2fc_means': np.log2((mean_a + 1e-9) / (mean_b + 1e-9)),
+        }, index=features.columns)
+    else:
+        result = pd.DataFrame({
+            'median_a': median_a_raw,
+            'median_b': median_b_raw,
+            'diff_median':     median_a_raw - median_b_raw,
+        }, index=features.columns)
 
-    return result.sort_values('pval', ascending=True)
+    result['pvals']     = pvals
+    result['pvals_adj'] = pvals_adj
+
+    return result.sort_values('pvals', ascending=True)
