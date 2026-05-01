@@ -183,7 +183,7 @@ class TrainingCheckpoint:
 
 
 def full_training(models : list[nn.Module],
-        train_dataset : Dataset, val_dataset : Dataset, per_channel_stds : np.Array,
+        train_dataset : Dataset, val_dataset : Dataset, per_channel_stds : np.array,
         generator : torch.Generator,
         optimizers : list[torch.optim.Optimizer],
         schedulers : list[LRScheduler], log : LossLogger,
