@@ -76,12 +76,22 @@ class PatchCollection(Dataset):
             print(f'per-channel means: {fmt(self.means)}')
             print(f'per-channel stds:  {fmt(self.stds)}')
 
-    def standardize(self, verbose=False):
-        if verbose: print('Standardizing patches...')
-        self.patches = (self.patches - self.means[None,None,None,:]) / self.stds[None,None,None,:]
+    def normalize(self, normalization, verbose=False):
+        if normalization is not None and normalization not in ['center', 'standardize', 'none']:
+            raise ValueError('normalization must equal "standardize" | "center" | "none" | None')
+        
+        if verbose: print(f'Normalizing color channels (normalization={normalization})...')
+        
+        self.empty = np.zeros(self.patches.shape[-1])
+        if normalization == 'standardize' or normalization == 'center':
+            self.patches = self.patches - self.means[None,None,None,:]
+            self.empty -= self.means
+        if normalization == 'standardize':
+            self.patches = self.patches / self.stds[None,None,None,:]
+            self.empty /= self.stds
 
     def __init__(self, samples, patchsize=40, patchstride=10, max_frac_empty=0.8,
-                standardize=True, percentile_thresh=99, verbose=False,
+                normalization='standardize', percentile_thresh=99, verbose=False,
                 covariates=None, condition_on_sid=True):
         self.samples = samples
         self.patchstride = patchstride
@@ -92,21 +102,18 @@ class PatchCollection(Dataset):
         self.pytorch_mode()
         self.make_patchmeta(covariates=covariates, condition_on_sid=condition_on_sid)
         self.compute_stats(percentile_thresh, verbose=verbose)
-        if standardize:
-            self.standardize(verbose=verbose)
+        self.normalize(normalization=normalization, verbose=verbose)
         self.augmentation_off()
 
-    def refined(self, max_frac_empty, tol=1e-10, standardize=True, percentile_thresh=99,
+    def refined(self, max_frac_empty, tol=1e-10, normalization='standardize', percentile_thresh=99,
                 verbose=False):
         import copy
-        empty_val = -self.means / self.stds
-        empty_frac = (np.abs(self.patches - empty_val[None,None,None,:]).max(axis=-1) < tol).mean(axis=(1, 2))
+        empty_frac = (np.abs(self.patches - self.empty[None,None,None,:]).max(axis=-1) < tol).mean(axis=(1, 2))
         keep = np.where(empty_frac < max_frac_empty)[0]
         result = copy.copy(self)
         result.subset(keep)
         result.compute_stats(percentile_thresh, verbose=verbose)
-        if standardize:
-            result.standardize(verbose=verbose)
+        result.normalize(normalization=normalization, verbose=verbose)
         return result
 
     @property

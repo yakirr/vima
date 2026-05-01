@@ -97,16 +97,20 @@ def evaluate(model : nn.Module, eval_dataset : Dataset,
     rlosses = []
     kllosses = []
     embeddings = []
+    channel_errs = []
     with torch.no_grad():
         for batch in eval_loader:
             predictions, mean, logvar = model.forward(batch, sample_from_latent=sample_from_latent)
 
             rlosses.append(reconstruction_loss(batch, predictions, per_sample=True).detach().cpu().numpy())
             kllosses.append(kl_weight * kl_loss(mean, logvar, per_sample=True).detach().cpu().numpy())
-            if detailed: embeddings.append(mean.detach().cpu().numpy())
+            if detailed:
+                embeddings.append(mean.detach().cpu().numpy())
+                x_true, _ = batch
+                channel_errs.append(((predictions - x_true)**2).mean(dim=(0,2,3)).detach().cpu().numpy())
 
     if detailed:
-        return np.concatenate(rlosses), np.concatenate(kllosses), np.concatenate(embeddings)
+        return np.concatenate(rlosses), np.concatenate(kllosses), np.concatenate(embeddings), np.stack(channel_errs).mean(axis=0)
     else:
         return np.concatenate(rlosses).mean(), np.concatenate(kllosses).mean()
 
@@ -210,9 +214,11 @@ def full_training(models : list[nn.Module],
                     kl_weight=kl_weight * min(epoch / 5, 1) if kl_warmup else kl_weight)
 
             print('Evaluating models on validation set...')
+            per_channel_reconstruction_errs = []
             for modelid, (model, scheduler, best_path) in enumerate(zip(pb(models), schedulers, best_model_params_paths)):
-                rlosses, kllosses, _ = evaluate(model, val_dataset, generator, kl_weight,
+                rlosses, kllosses, _, channel_losses = evaluate(model, val_dataset, generator, kl_weight,
                     detailed=True, subset=range(0, len(val_dataset), max(1, len(val_dataset)//2000)))
+                per_channel_reconstruction_errs.append(channel_losses)
                 scheduler.step()
                 log.log_epoch(modelid, rlosses + kllosses, rlosses, kllosses, models, val_dataset)
 
@@ -222,10 +228,12 @@ def full_training(models : list[nn.Module],
                     ckpt.best_epoch[modelid] = epoch
                     torch.save(model.state_dict(), best_path)
 
+            per_channel_reconstruction_errs = np.stack(per_channel_reconstruction_errs).mean(axis=0)
             fmt = lambda a: ' '.join(f'{v:.2g}' for v in a)
-            print('Best val. losses so far for each model:', fmt(ckpt.best_val_losses))
+            print(f'Per-channel recon errors: \033[32m{fmt(per_channel_reconstruction_errs)}\033[0m')
+            print(f'Best val. losses so far for each model: \033[32m{fmt(ckpt.best_val_losses)}\033[0m')
             fmt = lambda a: ' '.join(f'{v}' for v in a)
-            print('Best epoch so far for each model:', fmt(ckpt.best_epoch))
+            print(f'Best epoch so far for each model: \033[32m{fmt(ckpt.best_epoch)}\033[0m')
             print()
 
             if checkpoint_dir is not None:
@@ -239,7 +247,7 @@ def train_test_split(P, generator, breakdown=[0.8,0.2]):
     P.augmentation_on()
     return torch.utils.data.random_split(P, breakdown, generator=generator)
 
-def train(models, P, kl_weight=1e-5, kl_warmup=True, stop_augmentation=1,
+def train(models, P, kl_weight=1e-5, kl_warmup=True,
           batch_size=256, n_epochs=20, lr=1e-3, gamma=0.9,
           plot_reconstructions=False, on_epoch_end=None, seed=0, deterministic=False,
           checkpoint_dir=None):
