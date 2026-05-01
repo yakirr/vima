@@ -111,9 +111,9 @@ class PatchCollection(Dataset):
         empty_frac = (np.abs(self.patches - self.empty[None,None,None,:]).max(axis=-1) < tol).mean(axis=(1, 2))
         keep = np.where(empty_frac < max_frac_empty)[0]
         result = copy.copy(self)
-        result.subset(keep)
-        result.compute_stats(percentile_thresh, verbose=verbose)
-        result.normalize(normalization=normalization, verbose=verbose)
+        result.subset(keep,
+                      normalization=normalization, percentile_thresh=percentile_thresh,
+                      verbose=verbose)
         return result
 
     @property
@@ -155,9 +155,11 @@ class PatchCollection(Dataset):
         self.augmentation_off()
         print('\033[90m[PatchCollection: in numpy mode]\033[0m')
 
-    def subset(self, ix):
+    def subset(self, ix, percentile_thresh, normalization, verbose):
         self.patches = self.patches[ix]
         self.meta = self.meta.iloc[ix]
+        self.compute_stats(percentile_thresh, verbose=verbose)
+        self.normalize(normalization=normalization, verbose=verbose)
 
     def __repr__(self):
         ps = self.meta.patchsize.iloc[0]

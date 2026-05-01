@@ -91,7 +91,7 @@ def evaluate(model : nn.Module, eval_dataset : Dataset,
         dataset=eval_dataset,
         batch_size=batch_size,
         shuffle=False,
-        drop_last=True,
+        drop_last=len(eval_dataset) > 3 * batch_size,
         generator=generator)
 
     rlosses = []
