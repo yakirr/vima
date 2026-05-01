@@ -70,22 +70,30 @@ class LossLogger:
                 f'kl-weight {kl_weight:.2e} | '
                 f'{time_per_batch:.2f} sec/batch\033[0m')
 
-    def log_epoch(self, modelid, vlosses, vrlosses, vkllosses, models, val_dataset):
-        """Log validation loss."""
+    def log_epoch_onemodel(self, modelid, vlosses, vrlosses, vkllosses):
+        """Log validation losses for one model."""
         i = np.where(np.array(self.modelids) == modelid)[0][-1]
         self.val_losses[i] = vlosses.mean()
         self.val_rlosses[i] = vrlosses.mean()
         self.val_kllosses[i] = vkllosses.mean()
 
-        if modelid == self.nmodels - 1:
-            self.print_epoch_log(vrlosses, models, val_dataset)
-            if self.on_epoch_end is not None:
-                self.on_epoch_end(self.epoch, models, val_dataset)
-            self.epoch = self.epoch + 1
-            self.epochstarttime = time.time()
-            self.chunkstarttime = time.time()
+    def finalize_epoch(self, vrlosses, models, val_dataset,
+                       per_channel_mses, per_channel_stds, best_val_losses, best_epochs):
+        """Call once after all models are evaluated. Prints, plots, fires callback, advances counter."""
+        self._print_epoch_log(vrlosses, models, val_dataset)
+        fmt_ch = lambda a, b: ', '.join(f'{mse:.2g} ({(mse/std**2)*100:.0f}%)' for mse, std in zip(a, b))
+        fmt    = lambda a: ', '.join(f'{v:.2g}' for v in a)
+        fmt_i  = lambda a: ', '.join(f'{v}' for v in a)
+        print(f'Per-channel MSE (% of variance): \033[32m{fmt_ch(per_channel_mses, per_channel_stds)}\033[0m')
+        print(f'Best val. losses so far: \033[32m{fmt(best_val_losses)}\033[0m')
+        print(f'Best epoch so far: \033[32m{fmt_i(best_epochs)}\033[0m')
+        if self.on_epoch_end is not None:
+            self.on_epoch_end(self.epoch, models, val_dataset)
+        self.epoch += 1
+        self.epochstarttime = time.time()
+        self.chunkstarttime = time.time()
 
-    def print_epoch_log(self, vrlosses, models, val_dataset):
+    def _print_epoch_log(self, vrlosses, models, val_dataset):
         display.clear_output()
         plt.figure(figsize=(9,3))
         plt.subplot(1,2,1)
@@ -104,7 +112,7 @@ class LossLogger:
         
         plt.subplot(1,2,2)
         plt.hist(vrlosses, bins=50)
-        plt.title('Error across validation patches (1 model)')
+        plt.title('Reconstruction error across validation patches')
         plt.xlabel('Reconstruction error'); plt.ylabel('#Patches')
         plt.gca().spines[['top', 'right']].set_visible(False)
         plt.show()

@@ -215,12 +215,14 @@ def full_training(models : list[nn.Module],
 
             print('Evaluating models on validation set...')
             per_channel_mses = []
+            all_rlosses = []
             for modelid, (model, scheduler, best_path) in enumerate(zip(pb(models), schedulers, best_model_params_paths)):
                 rlosses, kllosses, _, channel_losses = evaluate(model, val_dataset, generator, kl_weight,
                     detailed=True, subset=range(0, len(val_dataset), max(1, len(val_dataset)//2000)))
                 per_channel_mses.append(channel_losses)
+                all_rlosses.append(rlosses)
                 scheduler.step()
-                log.log_epoch(modelid, rlosses + kllosses, rlosses, kllosses, models, val_dataset)
+                log.log_epoch_onemodel(modelid, rlosses + kllosses, rlosses, kllosses)
 
                 total_loss = rlosses.mean() + kllosses.mean()
                 if total_loss < ckpt.best_val_losses[modelid]:
@@ -229,12 +231,9 @@ def full_training(models : list[nn.Module],
                     torch.save(model.state_dict(), best_path)
 
             per_channel_mses = np.stack(per_channel_mses).mean(axis=0)
-            fmt = lambda a,b: ' '.join(f'{mse:.2g} ({(mse/std**2)*100:.0f}%)' for mse, std in zip(a,b))
-            print(f'Per-channel mean-squared error (percent of variance): \033[32m{fmt(per_channel_mses, per_channel_stds)}\033[0m')
-            fmt = lambda a: ' '.join(f'{v:.2g}' for v in a)
-            print(f'Best val. losses so far for each model: \033[32m{fmt(ckpt.best_val_losses)}\033[0m')
-            fmt = lambda a: ' '.join(f'{v}' for v in a)
-            print(f'Best epoch so far for each model: \033[32m{fmt(ckpt.best_epoch)}\033[0m')
+            avg_rlosses = np.stack(all_rlosses).mean(axis=0)
+            log.finalize_epoch(avg_rlosses, models, val_dataset,
+                               per_channel_mses, per_channel_stds, ckpt.best_val_losses, ckpt.best_epoch)
             print()
 
             if checkpoint_dir is not None:
