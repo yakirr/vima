@@ -229,7 +229,7 @@ def full_training(models : list[nn.Module],
                     torch.save(model.state_dict(), best_path)
 
             per_channel_mses = np.stack(per_channel_mses).mean(axis=0)
-            fmt = lambda a,b: ' '.join(f'{v:.2g} ({(v/b**2)*100:.0f}%)' for v in zip(a,b))
+            fmt = lambda a,b: ' '.join(f'{mse:.2g} ({(mse/std**2)*100:.0f}%)' for mse, std in zip(a,b))
             print(f'Per-channel mean-squared error (percent of variance): \033[32m{fmt(per_channel_mses, per_channel_stds)}\033[0m')
             fmt = lambda a: ' '.join(f'{v:.2g}' for v in a)
             print(f'Best val. losses so far for each model: \033[32m{fmt(ckpt.best_val_losses)}\033[0m')
