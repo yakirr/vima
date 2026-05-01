@@ -82,6 +82,14 @@ class Fingerprints:
             make_umap=make_umap,
         )
 
+    def compute_nngs(self, **kwargs):
+        for i in range(self.nmodels):
+            d = self.select_model(i)
+            sc.pp.neighbors(d, **kwargs)
+            self._adata.obsp[f'connectivities_{i}'] = d.obsp['connectivities']
+            self._adata.obsp[f'distances_{i}'] = d.obsp['distances']
+            self._adata.uns[f'neighbors_{i}'] = d.uns['neighbors']
+
     def sample_pcs(self, sid_name='sid'):
         D = self.avg_graph(make_umap=False)
         NAM, _ = cna.tl.nam(D, sid_name)
