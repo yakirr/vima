@@ -175,6 +175,7 @@ demo/data/IF/_results/fingerprints.pkl
 demo/data/IF/_results/model.pt
 demo/data/IF/_results/models.pt
 demo/data/ST/cells.tsv
+demo/data/ST/cell_metadata.tsv
 demo/data/ST/fingerprints.h5ad
 demo/data/ST/models.pt
 demo/data/ST/raw/H20.33.002_1217501042.csv
