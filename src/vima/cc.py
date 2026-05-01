@@ -117,13 +117,13 @@ def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_add
     if seed is not None: np.random.seed(seed)
 
     # Check formats of inputs and figure out which samples have valid data
-    batches, filter_samples = cna.tl._association.check_inputs(ds[0], y, sid_name, batches, covs, donorids, allow_low_sample_size)
+    batches, filter_samples = cna.tl._association.check_inputs(ds.select_model(0), y, sid_name, batches, covs, donorids, allow_low_sample_size)
 
     # Compute NAMs and filter to the appopriate samples and columns
     print('computing MAT') #TODO: rename MAM to MAT in code if we keep this nomenclature
     MAMs = []
     kepts = []
-    for d in ds:
+    for d in ds.modelspecific_fingerprints():
         MAM, kept, batches, covs, donorids, filter_samples = cna.tl._association.compute_nam_and_reindex(
             d, y, sid_name, batches, covs, donorids, filter_samples, nsteps, show_progress, **kwargs)
         MAMs.append(MAM)
@@ -136,7 +136,7 @@ def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_add
         kept[:] = False
         kept[downsampled_indices] = True
     for i in range(len(MAMs)):
-        MAMs[i] = MAMs[i][ds[0].obs.index[kept]]
+        MAMs[i] = MAMs[i][ds.select_model(0).obs.index[kept]]
 
     # residualize NAMs
     MAMs_concat = pd.concat(MAMs, axis=1)
@@ -151,7 +151,7 @@ def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_add
 
     print('performing association test')
     res_ = _association(
-        MAMs_concat.values, res.M.values, len(ds),
+        MAMs_concat.values, res.M.values, ds.nmodels,
         y[filter_samples].values, batches[filter_samples].values,
         donorids[filter_samples].values if donorids is not None else None,
         show_progress=show_progress, Nnull=Nnull,

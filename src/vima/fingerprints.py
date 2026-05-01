@@ -13,7 +13,7 @@ class Fingerprints:
     @classmethod
     def from_list(cls, ds):
         packed = ad.AnnData(obs=ds[0].obs.copy())
-        packed.uns['n_fingerprints'] = len(ds)
+        packed.uns['n_models'] = len(ds)
         for i, d in enumerate(ds):
             packed.obsm[f'X_{i}'] = d.X
             packed.obsp[f'connectivities_{i}'] = d.obsp['connectivities']
@@ -22,20 +22,27 @@ class Fingerprints:
         return cls(packed)
 
     def __len__(self):
-        return self._adata.uns['n_fingerprints']
+        return len(self._adata)
 
-    def __iter__(self):
-        return (self[i] for i in range(len(self)))
+    @property
+    def nmodels(self):
+        return self._adata.uns['n_models']
 
-    def __getitem__(self, i):
+    def __getitem__(self, key):
+        return Fingerprints(self._adata[key].copy())
+
+    def select_model(self, i):
         d = ad.AnnData(X=self._adata.obsm[f'X_{i}'], obs=self._adata.obs.copy())
         d.obsp['connectivities'] = self._adata.obsp[f'connectivities_{i}']
         d.obsp['distances'] = self._adata.obsp[f'distances_{i}']
         d.uns['neighbors'] = self._adata.uns[f'neighbors_{i}']
         return d
 
+    def modelspecific_fingerprints(self):
+        return (self.select_model(i) for i in range(self.nmodels))
+
     def __repr__(self):
-        n = len(self)
+        n = self.nmodels
         npatches = len(self._adata)
         emb_dim = self._adata.obsm['X_0'].shape[1]
         return f'Fingerprints object with nmodels × npatches × latentdim = {n} × {npatches} × {emb_dim}.'
@@ -46,13 +53,13 @@ class Fingerprints:
 
     def weighted_avg_graph(self, weights, kept, make_umap=True):
         M = kept.sum()
-        obs = self[0].obs.iloc[kept].copy(deep=True)
+        obs = self.select_model(0).obs.iloc[kept].copy(deep=True)
         obs.index = obs.index.astype(str)
-        D = ad.AnnData(X=np.random.randn(M, self[0].X.shape[1]), obs=obs)
+        D = ad.AnnData(X=np.random.randn(M, self.select_model(0).X.shape[1]), obs=obs)
 
         combined = sp.csr_matrix((M, M))
         combined_dist = sp.csr_matrix((M, M))
-        for d, w in zip(self, weights):
+        for d, w in zip(self.modelspecific_fingerprints(), weights):
             row_scaling = sp.diags(w)
             combined += row_scaling @ d.obsp['connectivities'][kept, :][:, kept]
             combined_dist += row_scaling @ d.obsp['distances'][kept, :][:, kept]
@@ -70,8 +77,8 @@ class Fingerprints:
 
     def avg_graph(self, make_umap=True):
         return self.weighted_avg_graph(
-            np.ones((len(self), len(self[0]))) / len(self),
-            kept=np.ones(len(self[0]), dtype=bool),
+            np.ones((self.nmodels, len(self._adata))) / self.nmodels,
+            kept=np.ones(len(self._adata), dtype=bool),
             make_umap=make_umap,
         )
 
@@ -85,7 +92,7 @@ class Fingerprints:
                             columns=[f'PC{i+1}' for i in range(U.shape[1])])
 
     def to_anndata(self):
-        X = np.hstack([self._adata.obsm[f'X_{i}'] for i in range(len(self))])
+        X = np.hstack([self._adata.obsm[f'X_{i}'] for i in range(self.nmodels)])
         return ad.AnnData(X=X, obs=self._adata.obs.copy())
 
     def write_h5ad(self, path):
