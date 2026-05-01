@@ -70,7 +70,11 @@ def _adjust_resolution(mypatches):
     stride = reduce(math.gcd, list(mypatches.x.astype(int)) + list(mypatches.y.astype(int)))
     mypatches.x = mypatches.x // stride
     mypatches.y = mypatches.y // stride
-    return mypatches
+    mypatches.patchsize = mypatches.patchsize // stride
+    
+    h = int(mypatches.y.max()+mypatches.patchsize.max())+1
+    w = int(mypatches.x.max()+mypatches.patchsize.max())+1
+    return mypatches, h, w
 
 def spatialplot(patchmeta, values, sids=None, cmap='viridis', vmin=None, vmax=None,
                 ncols=5, size=3, empty_color='black', show=True):
@@ -93,20 +97,21 @@ def spatialplot(patchmeta, values, sids=None, cmap='viridis', vmin=None, vmax=No
     sid_to_ax = {}
     for i, sid in enumerate(sids):
         ax = axs[i]
-        mypatches = _adjust_resolution(patchmeta[patchmeta.sid == sid])
-        h = int(mypatches['y'].max())+1
-        w = int(mypatches['x'].max())+1
+        mypatches = patchmeta[patchmeta.sid == sid]
+        if len(mypatches) == 0:
+            continue
+        mypatches, h, w = _adjust_resolution(patchmeta[patchmeta.sid == sid])
 
         occupancy = np.zeros((h, w), dtype=bool)
-        for x, y in mypatches[['x', 'y']].values.astype(int):
-            occupancy[y, x] = True
+        for x, y, ps in mypatches[['x', 'y', 'patchsize']].values.astype(int):
+            occupancy[y + ps//2, x + ps//2] = True
         row_keep = np.where(occupancy.any(axis=1))[0]
         col_keep = np.where(occupancy.any(axis=0))[0]
 
         canvas = np.full((h, w), np.nan)
         myvalues = values.reindex(mypatches.index)
-        for (x, y), v in zip(mypatches[['x', 'y']].values.astype(int), myvalues):
-            canvas[y, x] = v
+        for (x, y, ps), v in zip(mypatches[['x', 'y', 'patchsize']].values.astype(int), myvalues):
+            canvas[y + ps//2, x + ps//2] = v
         canvas = canvas[np.ix_(row_keep, col_keep)]
 
         ax.imshow(canvas, cmap=cmap_obj, vmin=vmin, vmax=vmax, interpolation='nearest')
@@ -133,14 +138,15 @@ def spatialplot(patchmeta, values, sids=None, cmap='viridis', vmin=None, vmax=No
 def annotate_spatialplot(sid_to_ax, patchmeta, highlight, color, thickness=3, show=True):
     import cv2
     for sid, ax in sid_to_ax.items():
-        mypatches = _adjust_resolution(patchmeta[patchmeta.sid == sid])
-        h = int(mypatches['y'].max())+1
-        w = int(mypatches['x'].max())+1
+        mypatches = patchmeta[patchmeta.sid == sid]
+        if len(mypatches) == 0:
+            continue
+        mypatches, h, w = _adjust_resolution(mypatches)
         mask = np.zeros((h, w), dtype=np.uint8)
 
         flagged = mypatches[highlight.reindex(mypatches.index).fillna(False)]
-        for x, y in flagged[['x', 'y']].values.astype(int):
-            mask[y,x] = 1
+        for x, y, ps in flagged[['x', 'y', 'patchsize']].values.astype(int):
+            mask[y:y+ps,x:x+ps] = 1
 
         if mask.max() == 0:
             continue
