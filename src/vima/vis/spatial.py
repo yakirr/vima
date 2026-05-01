@@ -1,9 +1,10 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from tqdm import tqdm
+import cv2
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 from ..data import samples as vds
 
+from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 
 
@@ -136,7 +137,6 @@ def spatialplot(patchmeta, values, sids=None, cmap='viridis', vmin=None, vmax=No
 
 
 def annotate_spatialplot(sid_to_ax, patchmeta, highlight, color, thickness=3, show=True):
-    import cv2
     for sid, ax in sid_to_ax.items():
         mypatches = patchmeta[patchmeta.sid == sid]
         if len(mypatches) == 0:
