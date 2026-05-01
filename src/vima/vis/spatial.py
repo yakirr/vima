@@ -2,79 +2,162 @@ import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
-from ..data import samples as tds
+from ..data import samples as vds
 
 pb = lambda x: tqdm(x, ncols=100)
 
 
-def spatialplot(samples, sortkey, allpatches, scores, rgbs=[[1.,0.,0.]],
-        labels=None,
-        highlights=None, outline_rgbas=None, outline_thickness=10,
-        skipthresh=10, skipevery=1, stopafter=None, label_fontsize=12,
-        scalebar=False, scalebar_size=100,
-        vmax=1, ncols=5, size=2, filterempty=False, show=True):
-    toplot = allpatches[allpatches.sid.isin(samples.keys())].sid.value_counts() > skipthresh
-    nsamples = len(sortkey[toplot].sort_values().index[::skipevery])
-    nrows = int(np.ceil(nsamples/ncols))
-    fig, axs = plt.subplots(nrows=nrows, ncols=ncols,
-                            figsize=(ncols*size,nrows*size))
+def plot_sample_with_patches(s, marker, patchmeta, remove_margin=False, ax=None, show=True, **kwargs):
+    if ax is None: ax = plt.gca()
 
-    for ax, sid in pb(zip(axs.flatten(), sortkey[toplot].sort_values().index[::skipevery])):
-        mypatches = allpatches[allpatches.sid == sid]
+    inpatches = vds.union_patches_in_sample(patchmeta, s).astype(np.uint8)
+    
+    if remove_margin and inpatches.sum() > 0:
+        indices = np.where(inpatches)
+        x_min, x_max = np.min(indices[1]), np.max(indices[1])
+        y_min, y_max = np.min(indices[0]), np.max(indices[0])
+        x_min = max(x_min-200, 0); x_max = min(x_max+200, inpatches.sizes['x'])
+        y_min = max(y_min-200, 0); y_max = min(y_max+200, inpatches.sizes['y'])
+    else:
+        x_min, x_max = 0, inpatches.sizes['x']
+        y_min, y_max = 0, inpatches.sizes['y']
 
-        canvas = tds.union_patches_in_sample(mypatches, samples[sid])
-        if filterempty:
-            indices = np.where(canvas)
-            nonempty_rows = canvas.sum(axis=1) > 0
-            nonempty_cols = canvas.sum(axis=0) > 0
-        else:
-            nonempty_rows = range(len(canvas))
-            nonempty_cols = range(len(canvas[0]))
+    # find contours of the patches in the sample
+    contours, _ = cv2.findContours(inpatches.data, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
-        ax.imshow(canvas[nonempty_rows][:,nonempty_cols], cmap='grey')
-        for score, color in zip(scores, rgbs):
-            sigcanvas = np.zeros((*canvas.shape, 4))
-            sigcanvas[:,:,:3] = color
+    # plot
+    ax.imshow(s.sel(marker=marker).data, **kwargs, cmap='seismic')
+    for cnt in contours:
+        cnt = cnt.squeeze()  # remove unnecessary dimensions
+        ax.plot(cnt[:, 0], cnt[:, 1], color='black')
+    ax.set_aspect('equal')
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_max, y_min)
 
-            score_ = score[mypatches.index].values / vmax
-            for (x,y,ps), s in zip(mypatches[['x','y','patchsize']].values, score_):
-                x,y,ps = int(x), int(y), int(ps)
-                sigcanvas[y:y+ps,x:x+ps,-1] += s
-            sigcanvas[sigcanvas > 1] = 1
-            ax.imshow(sigcanvas[nonempty_rows][:,nonempty_cols])
+    if show:
+        plt.show()
 
-        if highlights is not None:
-            for highlight, outline_rgba in zip(highlights, outline_rgbas):
-                myhighlight = highlight[mypatches.index]
-                mask = tds.union_patches_in_sample(mypatches[myhighlight != 0], samples[sid])
-                boundary = tds.get_boundary(mask.data, outline_rgba, thickness=outline_thickness)
-                ax.imshow(boundary[nonempty_rows][:,nonempty_cols])
-        if labels is not None:
-            ax.set_title(labels[sid], color='white', fontsize=label_fontsize)
 
-        if scalebar:
-            scalebar = AnchoredSizeBar(ax.transData,
-                scalebar_size, '', 'lower right', pad=0.2, label_top=True, color='white', frameon=False, size_vertical=2)
-            ax.add_artist(scalebar)
+def plot_samples_with_patches(samples, marker, patchmeta, ncols=5, **kwargs):
+    nrows = int(np.ceil(len(samples) / ncols))
+    fig, axs = plt.subplots(nrows, ncols, figsize=(3*ncols, 3*nrows))
+    for ax, s in pb(zip(axs.flatten(), samples)):
+        plot_sample_with_patches(s, marker, patchmeta, ax=ax, show=False, **kwargs)
+        ax.set_title(s.sid)
+    fig.tight_layout()
+    fig.show()
 
-        if stopafter is not None and ax == axs.flatten()[stopafter-1]:
-            break
 
-    for ax in axs.flatten()[nsamples:]:
-        ax.imshow(np.zeros((10,10)), cmap='grey', vmin=0, vmax=1)
+def plot_npatches_per_sample(samples, patchmeta):
+    res = patchmeta.sid.value_counts()
+    empty = [sid for sid in samples.keys() if sid not in patchmeta.sid.unique()]
+    for sid in empty:
+        res.loc[sid] = 0
 
-    for ax in axs.flatten():
-        ax.spines[['top','bottom','left','right']].set_visible(False)
+    plt.figure(figsize=(15,2))
+    plt.bar(x=res.index, height=res)
+    plt.tick_params(axis='x', rotation=90)
+    plt.gca().spines[['top', 'right']].set_visible(False)
+    plt.show()
+
+
+def _adjust_resolution(mypatches):
+    import math
+    from functools import reduce
+    mypatches = mypatches.copy()
+    if mypatches.patchsize.nunique() > 1:
+        raise ValueError('All patches must have the same patchsize')
+    stride = reduce(math.gcd, list(mypatches.x.astype(int)) + list(mypatches.y.astype(int)))
+    mypatches.x = mypatches.x // stride
+    mypatches.y = mypatches.y // stride
+    return mypatches
+
+def spatialplot(patchmeta, values, sids=None, cmap='viridis', vmin=None, vmax=None,
+                ncols=5, size=3, empty_color='black', show=True):
+    import copy
+    if sids is None:
+        sids = list(patchmeta.sid.unique())
+    nrows = int(np.ceil(len(sids) / ncols))
+    fig, axs = plt.subplots(nrows, ncols, figsize=(size * ncols, size * nrows),
+                            facecolor='black', squeeze=False)
+    axs = axs.flatten()
+
+    cmap_obj = copy.copy(plt.get_cmap(cmap))
+    cmap_obj.set_bad(empty_color)
+
+    if vmin is None:
+        vmin = np.percentile(values, 5)
+    if vmax is None:
+        vmax = np.percentile(values, 95)
+
+    sid_to_ax = {}
+    for i, sid in enumerate(sids):
+        ax = axs[i]
+        mypatches = _adjust_resolution(patchmeta[patchmeta.sid == sid])
+        h = int(mypatches['y'].max())+1
+        w = int(mypatches['x'].max())+1
+
+        occupancy = np.zeros((h, w), dtype=bool)
+        for x, y in mypatches[['x', 'y']].values.astype(int):
+            occupancy[y, x] = True
+        row_keep = np.where(occupancy.any(axis=1))[0]
+        col_keep = np.where(occupancy.any(axis=0))[0]
+
+        canvas = np.full((h, w), np.nan)
+        myvalues = values.reindex(mypatches.index)
+        for (x, y), v in zip(mypatches[['x', 'y']].values.astype(int), myvalues):
+            canvas[y, x] = v
+        canvas = canvas[np.ix_(row_keep, col_keep)]
+
+        ax.imshow(canvas, cmap=cmap_obj, vmin=vmin, vmax=vmax, interpolation='nearest')
+        ax._vima_row_keep = row_keep
+        ax._vima_col_keep = col_keep
+        ax.set_title(sid, color='white', fontsize=8)
+        ax.set_facecolor('black')
+        for spine in ax.spines.values():
+            spine.set_visible(False)
         ax.set_xticks([])
         ax.set_yticks([])
-        ax.xaxis.set_tick_params(length=0)
-        ax.yaxis.set_tick_params(length=0)
-        ax.set_xticklabels([])
-        ax.set_yticklabels([])
+        sid_to_ax[sid] = ax
 
-    fig.patch.set_facecolor('black')
+    for ax in axs[len(sids):]:
+        ax.axis('off')
+
+    fig.tight_layout()
+    if show:
+        plt.show()
+    else:
+        return sid_to_ax
+
+
+def annotate_spatialplot(sid_to_ax, patchmeta, highlight, color, thickness=3, show=True):
+    import cv2
+    for sid, ax in sid_to_ax.items():
+        mypatches = _adjust_resolution(patchmeta[patchmeta.sid == sid])
+        h = int(mypatches['y'].max())+1
+        w = int(mypatches['x'].max())+1
+        mask = np.zeros((h, w), dtype=np.uint8)
+
+        flagged = mypatches[highlight.reindex(mypatches.index).fillna(False)]
+        for x, y in flagged[['x', 'y']].values.astype(int):
+            mask[y,x] = 1
+
+        if mask.max() == 0:
+            continue
+
+        row_keep = getattr(ax, '_vima_row_keep', None)
+        col_keep = getattr(ax, '_vima_col_keep', None)
+        if row_keep is not None:
+            mask = mask[np.ix_(row_keep, col_keep)]
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        for cnt in contours:
+            cnt = cnt.squeeze()
+            if cnt.ndim == 1:
+                continue
+            ax.plot(cnt[:, 0], cnt[:, 1], color=color, linewidth=thickness)
 
     if show:
         plt.show()
     else:
-        return fig
+        return sid_to_ax
