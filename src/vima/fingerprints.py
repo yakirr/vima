@@ -4,6 +4,8 @@ import anndata as ad
 import scanpy as sc
 import scipy.sparse as sp
 import cna
+from tqdm import tqdm
+pb = lambda x: tqdm(x, ncols=100)
 
 
 class Fingerprints:
@@ -83,7 +85,7 @@ class Fingerprints:
         )
 
     def compute_nngs(self, **kwargs):
-        for i in range(self.nmodels):
+        for i in pb(range(self.nmodels)):
             d = self.select_model(i)
             sc.pp.neighbors(d, **kwargs)
             self._adata.obsp[f'connectivities_{i}'] = d.obsp['connectivities']
