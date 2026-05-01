@@ -183,7 +183,7 @@ class TrainingCheckpoint:
 
 
 def full_training(models : list[nn.Module],
-        train_dataset : Dataset, val_dataset : Dataset,
+        train_dataset : Dataset, val_dataset : Dataset, per_channel_stds : np.Array,
         generator : torch.Generator,
         optimizers : list[torch.optim.Optimizer],
         schedulers : list[LRScheduler], log : LossLogger,
@@ -214,11 +214,11 @@ def full_training(models : list[nn.Module],
                     kl_weight=kl_weight * min(epoch / 5, 1) if kl_warmup else kl_weight)
 
             print('Evaluating models on validation set...')
-            per_channel_reconstruction_errs = []
+            per_channel_mses = []
             for modelid, (model, scheduler, best_path) in enumerate(zip(pb(models), schedulers, best_model_params_paths)):
                 rlosses, kllosses, _, channel_losses = evaluate(model, val_dataset, generator, kl_weight,
                     detailed=True, subset=range(0, len(val_dataset), max(1, len(val_dataset)//2000)))
-                per_channel_reconstruction_errs.append(channel_losses)
+                per_channel_mses.append(channel_losses)
                 scheduler.step()
                 log.log_epoch(modelid, rlosses + kllosses, rlosses, kllosses, models, val_dataset)
 
@@ -228,9 +228,10 @@ def full_training(models : list[nn.Module],
                     ckpt.best_epoch[modelid] = epoch
                     torch.save(model.state_dict(), best_path)
 
-            per_channel_reconstruction_errs = np.stack(per_channel_reconstruction_errs).mean(axis=0)
+            per_channel_mses = np.stack(per_channel_mses).mean(axis=0)
+            fmt = lambda a,b: ' '.join(f'{v:.2g} ({(v/b**2)*100:.0f}%)' for v in zip(a,b))
+            print(f'Per-channel mean-squared error (percent of variance): \033[32m{fmt(per_channel_mses, per_channel_stds)}\033[0m')
             fmt = lambda a: ' '.join(f'{v:.2g}' for v in a)
-            print(f'Per-channel recon errors: \033[32m{fmt(per_channel_reconstruction_errs)}\033[0m')
             print(f'Best val. losses so far for each model: \033[32m{fmt(ckpt.best_val_losses)}\033[0m')
             fmt = lambda a: ' '.join(f'{v}' for v in a)
             print(f'Best epoch so far for each model: \033[32m{fmt(ckpt.best_epoch)}\033[0m')
@@ -264,7 +265,7 @@ def train(models, P, kl_weight=1e-5, kl_warmup=True,
                      on_epoch_end=on_epoch_end)
 
     full_training(models,
-                    train_dataset, val_dataset,
+                    train_dataset, val_dataset, P.stds,
                     g,
                     optimizers, schedulers, log,
                     batch_size=batch_size, n_epochs=n_epochs,
