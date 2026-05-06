@@ -133,7 +133,7 @@ def write_harmonized(outdir, repname, harmpixels):
         s.to_netcdf(f'{processeddir}/{sid}.nc', encoding={s.name: util.compression}, engine="netcdf4")
         gc.collect()
 
-def sanity_checks(outdir, repname, sid_to_covs=None):
+def sanity_checks(outdir, repname, npcs=1, nskip=3):
     processeddir = f'{outdir}/{repname}'
     sids = [os.path.splitext(f)[0]
         for f in os.listdir(processeddir) if f.endswith('.nc')]
@@ -158,13 +158,18 @@ def sanity_checks(outdir, repname, sid_to_covs=None):
     del harmpixels
     gc.collect()
 
-    print('PC1 of several samples')
-    fig, axs = plt.subplots(len(sids[::5])//5 + 1, 5, figsize=(16, 4*(len(sids[::5])//5 + 1)))
-    for sid, ax in zip(sids[::3], axs.flatten()):
-        s = xr.open_dataarray(f'{processeddir}/{sid}.nc').astype(np.float32)
-        vmax = np.percentile(np.abs(s.sel(marker='hPC1').data), 99)
-        s.sel(marker='hPC1').plot(ax=ax, cmap='seismic', vmin=-vmax, vmax=vmax, add_colorbar=False)
-        ax.set_title(sid)
-        gc.collect()
-    plt.tight_layout()
-    plt.show()
+    for i in range(1, npcs+1):
+        print(f'PC{i} of several samples')
+        fig, axs = plt.subplots(len(sids[::nskip])//5 + 1, 5, figsize=(16, 4*(len(sids[::nskip])//5 + 1)))
+        flat_axs = axs.flatten()
+        for ax in flat_axs:
+            ax.set_visible(False)
+        for sid, ax in zip(sids[::nskip], flat_axs):
+            ax.set_visible(True)
+            s = xr.open_dataarray(f'{processeddir}/{sid}.nc').astype(np.float32)
+            vmax = np.percentile(np.abs(s.sel(marker=f'hPC{i}').data), 99)
+            s.sel(marker=f'hPC{i}').plot(ax=ax, cmap='seismic', vmin=-vmax, vmax=vmax, add_colorbar=False)
+            ax.set_title(sid)
+            gc.collect()
+        plt.tight_layout()
+        plt.show()
