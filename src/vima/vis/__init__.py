@@ -1,4 +1,5 @@
 from .umaps import plot_association
+from .patches import show_patches_separate, show_patches_composite, MarkersInSpace
 from .features import _select_features, plot_features, plot_features_by_sample
 from .patchexamples import (scaler, apply_colormap, plot_with_reconstruction,
                       plot_patches_separatechannels, plot_patches_overlaychannels,

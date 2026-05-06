@@ -53,7 +53,7 @@ def train_one_epoch(models : list[nn.Module], train_dataset : Dataset,
         dataset=train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        drop_last=True,
+        drop_last=len(train_dataset) > 3 * batch_size, #to prevent throwing away examples if dataset is small
         generator=generator)
 
     print(f'#batches: {len(train_loader)}')
@@ -91,7 +91,7 @@ def evaluate(model : nn.Module, eval_dataset : Dataset,
         dataset=eval_dataset,
         batch_size=batch_size,
         shuffle=False,
-        drop_last=len(eval_dataset) > 3 * batch_size,
+        drop_last=len(eval_dataset) > 3 * batch_size, #to prevent throwing away examples if dataset is small
         generator=generator)
 
     rlosses = []
