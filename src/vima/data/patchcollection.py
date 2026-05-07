@@ -89,6 +89,7 @@ class PatchCollection(Dataset):
         if normalization == 'standardize':
             self.patches = self.patches / self.stds[None,None,None,:]
             self.empty /= self.stds
+        self.normalization = normalization
 
     def __init__(self, samples, patchsize=40, patchstride=10, max_frac_empty=0.8,
                 normalization='standardize', percentile_thresh=99, verbose=False,

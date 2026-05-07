@@ -264,7 +264,8 @@ def train(models, P, kl_weight=1e-5, kl_warmup=True,
                      on_epoch_end=on_epoch_end)
 
     full_training(models,
-                    train_dataset, val_dataset, P.stds,
+                    train_dataset, val_dataset,
+                    P.stds if P.normalization != 'standardize' else P.stds/P.stds,
                     g,
                     optimizers, schedulers, log,
                     batch_size=batch_size, n_epochs=n_epochs,
