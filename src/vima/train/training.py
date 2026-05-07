@@ -4,7 +4,7 @@ from torch import nn, Tensor
 from torch.utils.data import Dataset, DataLoader
 from torch.optim.lr_scheduler import LRScheduler
 import torch.nn.functional as F
-import random, time, os, pickle
+import random, time, os, pickle, shutil
 import pandas as pd
 from tempfile import TemporaryDirectory
 
@@ -280,4 +280,6 @@ def fit(models, P, Pdense, n_epochs_all=10, n_epochs_dense=20, checkpoint_dir=No
     log2 = train(models, Pdense, n_epochs=n_epochs_dense,
                  checkpoint_dir=os.path.join(checkpoint_dir, 'phase_2') if checkpoint_dir else None,
                  **train_kwargs)
+    if checkpoint_dir is not None and os.path.exists(checkpoint_dir):
+        shutil.rmtree(checkpoint_dir)
     return log1, log2
