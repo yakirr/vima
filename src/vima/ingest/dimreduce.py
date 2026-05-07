@@ -13,7 +13,7 @@ import gc
 ###########################################
 # dimensionality reduction and integration
 ###########################################
-def metapixels_allsamples(normedpixelsdir, masksdir, sids, plot=True, ncols=8, total_n_metapixels=2_000_000):
+def metapixels_allsamples(normedpixelsdir, masksdir, sids, total_n_metapixels, plot=True):
     def cdf(v, ax):
         sorted_data = np.sort(v)
         cdf = np.arange(1, len(sorted_data) + 1) / len(sorted_data)
@@ -33,9 +33,11 @@ def metapixels_allsamples(normedpixelsdir, masksdir, sids, plot=True, ncols=8, t
     print('Creating metapixels prior to PCA')
     print(f'\t(will randomly downsample to {nmp_per_sample} metapixels per sample if needed.)')
     for i, sid in enumerate(pb(sids)):
-        all_metapixels[sid], all_npixels[sid] = metapixels(
-            xr.open_dataarray(f'{normedpixelsdir}/{sid}.nc').astype(np.float32),
-            xr.open_dataarray(f'{masksdir}/{sid}.nc'))
+        da = xr.open_dataarray(f'{normedpixelsdir}/{sid}.nc')
+        mask_da = xr.open_dataarray(f'{masksdir}/{sid}.nc')
+        all_metapixels[sid], all_npixels[sid] = metapixels(da.astype(np.float32), mask_da)
+        da.close(); mask_da.close()
+        del da, mask_da
         if len(all_metapixels[sid]) > nmp_per_sample:
             ix = np.random.choice(len(all_metapixels[sid]), nmp_per_sample, replace=False)
             all_metapixels[sid] = all_metapixels[sid].iloc[ix]
@@ -114,15 +116,17 @@ def pca_pixels(normedpixelsdir, masksdir, pcloadings, sids):
 
     print('Applying PCA projection to each sample')
     for sid in pb(sids):
-        pl = util.xr_to_pixellist(
-            xr.open_dataarray(f'{normedpixelsdir}/{sid}.nc').astype(np.float32),
-            xr.open_dataarray(f'{masksdir}/{sid}.nc')
-        )
-        pl_pca = pl.dot(pcloadings)
+        da = xr.open_dataarray(f'{normedpixelsdir}/{sid}.nc')
+        mask_da = xr.open_dataarray(f'{masksdir}/{sid}.nc')
+        pl = util.xr_to_pixellist(da.astype(np.float32), mask_da)
+        # close file handles before the dot product so HDF5 cache is released
+        da.close(); mask_da.close()
+        del da, mask_da; gc.collect()
 
+        pl_pca = pl.dot(pcloadings)
         pcs.append(pl_pca)
         sid_labels.append(np.full(pl_pca.shape[0], sid, dtype=object))
-        del pl, pl_pca; gc.collect()
+        del pl; gc.collect()
 
     # concatenate
     pcs = np.vstack(pcs)

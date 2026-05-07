@@ -82,7 +82,7 @@ class PatchCollection(Dataset):
         
         if verbose: print(f'Normalizing color channels (normalization={normalization})...')
         
-        self.empty = np.zeros(self.patches.shape[-1])
+        self.empty = np.zeros(self.patches.shape[-1], dtype=np.float32)
         if normalization == 'standardize' or normalization == 'center':
             self.patches = self.patches - self.means[None,None,None,:]
             self.empty -= self.means

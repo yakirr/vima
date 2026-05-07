@@ -57,7 +57,7 @@ def plot_features(
     df['status'] = np.where(group_a[mask], labels[0], labels[1])
     df = df.melt(id_vars='status', value_vars=toplot, var_name='marker', value_name='value')
 
-    plot_fn = {'violin': sns.violinplot, 'box': sns.boxplot}.get(kind)
+    plot_fn = {'violin': sns.violinplot, 'box': sns.boxplot, 'swarm': sns.swarmplot}.get(kind)
     if plot_fn is None:
         raise ValueError(f'kind must be "violin" or "box"; got {kind!r}')
     plot_kwargs = {'split': True, 'density_norm': 'count', 'inner': 'quart'} if kind == 'violin' else {}

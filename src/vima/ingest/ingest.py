@@ -70,7 +70,8 @@ def add_covs(pca, sid_to_covs):
         pca[cov_name] = pca['sid'].map(sid_to_covs[cov_name])
     return ['sid'] + cov_names
 
-def pca_pixels(outdir, repname, nmetamarkers=10, plot=True, npixels_to_plot=50000, sid_to_covs=None):
+def pca_pixels(outdir, repname, nmetamarkers=10, plot=True, npixels_to_plot=50000,
+               total_n_metapixels=2_000_000, sid_to_covs=None):
     # prepare directory structure
     masksdir = f'{outdir}/masks'
     normeddir = f'{outdir}/normalized'
@@ -82,7 +83,9 @@ def pca_pixels(outdir, repname, nmetamarkers=10, plot=True, npixels_to_plot=5000
         for f in os.listdir(normeddir) if f.endswith('.nc') and not f.startswith('.')]
 
     # create metapixels for more accurate PCA
-    metapixels, npixels = dimreduce.metapixels_allsamples(normeddir, masksdir, sids, plot=plot)
+    metapixels, npixels = dimreduce.metapixels_allsamples(normeddir, masksdir, sids,
+                                                          total_n_metapixels=total_n_metapixels,
+                                                          plot=plot)
 
     # PCA the metapixels
     loadings, C, allmp = dimreduce.pca_metapixels(metapixels.values(), nmetamarkers, plot=plot)
@@ -126,6 +129,7 @@ def write_harmonized(outdir, repname, harmpixels):
         pl = harmpixels[harmpixels.sid == sid]
         s_ = np.zeros((*mask.shape, len(hpcs)))
         s_[mask.data] = pl[pcs].values
+        mask.close(); del mask
         s = xr.DataArray(s_,
              dims=['y', 'x', 'marker'],
              coords={'x': mask.x, 'y': mask.y, 'marker': hpcs})
@@ -139,14 +143,24 @@ def sanity_checks(outdir, repname, npcs=1, nskip=3):
         for f in os.listdir(processeddir) if f.endswith('.nc')]
 
     print('all PCs of one sample')
-    s = xr.open_dataarray(f'{processeddir}/{sids[0]}.nc').astype(np.float32)
+    da = xr.open_dataarray(f'{processeddir}/{sids[0]}.nc')
+    s = da.astype(np.float32)
+    da.close(); del da
     s.plot(col='marker', col_wrap=5, vmin=-10, vmax=10, cmap='seismic')
     plt.show()
+    del s
 
     print('histogram of each pc')
-    ss = [xr.open_dataarray(f'{processeddir}/{sid}.nc').astype(np.float32) for sid in sids]
-    nmms = len(ss[0].marker)
-    harmpixels = np.concatenate([s.data.reshape((-1, nmms)) for s in ss])
+    da0 = xr.open_dataarray(f'{processeddir}/{sids[0]}.nc')
+    nmms = len(da0.marker)
+    da0.close(); del da0
+    chunks = []
+    for sid in sids:
+        da = xr.open_dataarray(f'{processeddir}/{sid}.nc')
+        chunks.append(da.astype(np.float32).data.reshape((-1, nmms)))
+        da.close(); del da
+    harmpixels = np.concatenate(chunks)
+    del chunks
     harmpixels = harmpixels[(harmpixels != 0).sum(axis=1) > 0]
     plt.figure(figsize=(3*4, 2*int(np.ceil(nmms/4))))
     for i in pb(range(nmms)):
@@ -154,7 +168,6 @@ def sanity_checks(outdir, repname, npcs=1, nskip=3):
         plt.hist(harmpixels[:,i], bins=1000)
     plt.tight_layout()
     plt.show()
-    del ss
     del harmpixels
     gc.collect()
 
@@ -166,10 +179,12 @@ def sanity_checks(outdir, repname, npcs=1, nskip=3):
             ax.set_visible(False)
         for sid, ax in zip(sids[::nskip], flat_axs):
             ax.set_visible(True)
-            s = xr.open_dataarray(f'{processeddir}/{sid}.nc').astype(np.float32)
+            da = xr.open_dataarray(f'{processeddir}/{sid}.nc')
+            s = da.astype(np.float32)
+            da.close(); del da
             vmax = np.percentile(np.abs(s.sel(marker=f'hPC{i}').data), 99)
             s.sel(marker=f'hPC{i}').plot(ax=ax, cmap='seismic', vmin=-vmax, vmax=vmax, add_colorbar=False)
             ax.set_title(sid)
-            gc.collect()
+            del s; gc.collect()
         plt.tight_layout()
         plt.show()

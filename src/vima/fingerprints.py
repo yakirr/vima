@@ -8,6 +8,28 @@ from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 
 
+class _ObsmView:
+    """Filtered write-through proxy over an AnnData obsm mapping."""
+    def __init__(self, obsm, exclude):
+        self._obsm = obsm
+        self._exclude = exclude
+
+    def _visible(self, key):
+        return key not in self._exclude
+
+    def __setitem__(self, key, value):   self._obsm[key] = value
+    def __delitem__(self, key):          del self._obsm[key]
+    def __getitem__(self, key):
+        if not self._visible(key): raise KeyError(key)
+        return self._obsm[key]
+    def __contains__(self, key):  return self._visible(key) and key in self._obsm
+    def __iter__(self):           return (k for k in self._obsm if self._visible(k))
+    def __repr__(self):           return f"_ObsmView with keys: {', '.join(self.keys())}"
+    def keys(self):               return [k for k in self._obsm if self._visible(k)]
+    def values(self):             return [self._obsm[k] for k in self._obsm if self._visible(k)]
+    def items(self):              return [(k, self._obsm[k]) for k in self._obsm if self._visible(k)]
+
+
 class Fingerprints:
     def __init__(self, adata):
         self._adata = adata
@@ -52,12 +74,19 @@ class Fingerprints:
     @property
     def obs(self):
         return self._adata.obs
+    
+    @property
+    def obsm(self):
+        exclude = {f'X_{i}' for i in range(self.nmodels)}
+        return _ObsmView(self._adata.obsm, exclude)
 
     def weighted_avg_graph(self, weights, kept, make_umap=True):
         M = kept.sum()
-        obs = self.select_model(0).obs.iloc[kept].copy(deep=True)
+        obs = self.obs.iloc[kept].copy(deep=True)
         obs.index = obs.index.astype(str)
-        D = ad.AnnData(X=np.random.randn(M, self.select_model(0).X.shape[1]), obs=obs)
+        D = ad.AnnData(X=np.random.randn(M, self.select_model(0).X.shape[1]),
+                       obs=obs,
+                       obsm={k:v[kept] for k, v in self.obsm.items()})
 
         combined = sp.csr_matrix((M, M))
         combined_dist = sp.csr_matrix((M, M))
