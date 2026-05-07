@@ -283,3 +283,77 @@ def show_patches_composite(patchmeta, markers, directory, samples=None,
     return _get_default_mis(directory, samples).show_composite(
         patchmeta, markers, features=features, colors=colors,
         n=n, nx=nx, ny=ny, seed=seed, vmin=vmin, vmax=vmax, show=show)
+
+
+def show_patches_cells(patchmeta, cells, x_col, y_col, celltype_col,
+                       pixelsize_microns, nx=5, ny=5, sid_col='sid',
+                       colors=None, seed=None, s=8, show=True):
+    """Show an nx×ny grid of randomly chosen patches with cells overlaid as colored dots.
+
+    Args:
+        patchmeta:         DataFrame with columns sid, x_microns, y_microns, patchsize.
+        cells:             DataFrame of cells containing sid_col, x_col, y_col, celltype_col.
+        x_col, y_col:      Column names for cell spatial coordinates (same units as x_microns/y_microns).
+        celltype_col:      Column name for cell-type labels.
+        pixelsize_microns: Size of one pixel in microns.
+        nx, ny:            Grid dimensions (columns × rows).
+        sid_col:           Column in cells that identifies the sample (default 'sid').
+        colors:            Dict {cell_type → color} for explicit assignment, or None for automatic.
+        seed:              Random seed for patch downsampling.
+        s:                 Scatter dot size.
+        show:              Whether to call plt.show().
+    """
+    n = nx * ny
+
+    # Downsample patches
+    if len(patchmeta) > n:
+        patchmeta = patchmeta.sample(n=n, random_state=seed)
+    patchmeta = patchmeta.reset_index(drop=True)
+
+    extent = int(patchmeta['patchsize'].iloc[0]) * pixelsize_microns
+
+    # Build color map for cell types
+    all_types = sorted(cells[celltype_col].dropna().unique())
+    if colors is None:
+        palette = plt.cm.tab20(np.linspace(0, 1, max(len(all_types), 1)))
+        colors = {ct: palette[i] for i, ct in enumerate(all_types)}
+
+    fig, axs = plt.subplots(ny, nx, figsize=(nx * 2, ny * 2), squeeze=False)
+    for ax in axs.flatten():
+        ax.set_visible(False)
+
+    for plot_idx, (_, row) in enumerate(patchmeta.iterrows()):
+        ax = axs[plot_idx // nx, plot_idx % nx]
+        ax.set_visible(True)
+
+        x0, y0 = row.x_microns, row.y_microns
+        x1, y1 = x0 + extent, y0 + extent
+
+        patch_cells = cells[
+            (cells[sid_col] == row['sid']) &
+            (cells[x_col] >= x0) & (cells[x_col] < x1) &
+            (cells[y_col] >= y0) & (cells[y_col] < y1)
+        ]
+
+        ax.set_facecolor('#f0f0f0')
+        ax.set_xlim(x0, x1)
+        ax.set_ylim(y0, y1)
+        ax.set_aspect('equal')
+        ax.axis('off')
+
+        for ct, grp in patch_cells.groupby(celltype_col, observed=True):
+            ax.scatter(grp[x_col], grp[y_col],
+                       c=[colors.get(ct, 'gray')], s=s, linewidths=0)
+
+    handles = [mpatches.Patch(facecolor=colors.get(ct, 'gray'), label=ct)
+               for ct in all_types]
+    ncol_legend = min(len(all_types), 6)
+    bottom_margin = 0.04 * int(np.ceil(len(all_types) / ncol_legend)) + 0.02
+    fig.legend(handles=handles, loc='lower center', ncol=ncol_legend,
+               frameon=False, fontsize=7,
+               bbox_to_anchor=(0.5, 0), bbox_transform=fig.transFigure)
+    plt.tight_layout(rect=[0, bottom_margin, 1, 1])
+
+    if show:
+        plt.show()
+    return fig
