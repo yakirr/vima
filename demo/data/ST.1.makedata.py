@@ -1,14 +1,91 @@
 import os
 import numpy as np
 import pandas as pd
+import xarray as xr
+import cv2
 
 RANDOM_SEED = 42
 rng = np.random.default_rng(RANDOM_SEED)
+RESOLUTION_UM = 10
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RAW_DIR = os.path.join(HERE, '../../../../ST/ALZ/alz-data/transcripts')
 CELLS_FILE = os.path.join(HERE, '../../../../ST/ALZ/alz-data/SEAAD_MTG_MERFISH_metadata.2024-05-03.noblanks.harmonized.txt')
 OUT_DIR = os.path.join(HERE, 'ST/raw')
+
+
+def get_l23it_region(df, sid_cells, resolution=RESOLUTION_UM):
+    """Rasterize L2/3 IT cells and return a boolean mask of the dense region."""
+    x_min, x_max = df['global_x'].min(), df['global_x'].max()
+    y_min, y_max = df['global_y'].min(), df['global_y'].max()
+
+    xs = np.arange(x_min, x_max + resolution, resolution)
+    ys = np.arange(y_min, y_max + resolution, resolution)
+    layer = xr.DataArray(
+        np.zeros((len(ys), len(xs)), dtype=np.uint8),
+        dims=['y', 'x'],
+        coords={'y': ys, 'x': xs},
+    )
+
+    mycells_ = sid_cells[sid_cells.subclass_name == 'L2/3 IT']
+    for cx, cy in mycells_[['x', 'y']].values:
+        nearest = layer.sel(x=cx, y=cy, method='nearest')
+        layer.loc[nearest.y.item(), nearest.x.item()] = 1
+
+    layer.data = cv2.morphologyEx(
+        layer.data, cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (40, 40))
+    )
+    layer.data = cv2.morphologyEx(
+        layer.data, cv2.MORPH_OPEN,
+        np.ones((20, 20), np.uint8)
+    )
+    return layer.astype(bool)
+
+
+def transcripts_in_region(df, region, xcol='x', ycol='y'):
+    """Boolean array True where each row's (xcol, ycol) falls inside the region mask."""
+    x0 = region.x.values[0]
+    y0 = region.y.values[0]
+    dx = float(region.x.values[1] - region.x.values[0])
+    dy = float(region.y.values[1] - region.y.values[0])
+    nx, ny = len(region.x), len(region.y)
+
+    xi = np.round((df[xcol].values - x0) / dx).astype(int)
+    yi = np.round((df[ycol].values - y0) / dy).astype(int)
+
+    valid = (xi >= 0) & (xi < nx) & (yi >= 0) & (yi < ny)
+    in_region = np.zeros(len(df), dtype=bool)
+    in_region[valid] = region.values[yi[valid], xi[valid]]
+    return in_region
+
+
+def make_spike_transcripts(cells_in_reg, gene_pool, n_per_cell=300):
+    """For each cell in the region place n_per_cell SECRET transcripts in a
+    Gaussian (stddev=10 µm) around the cell centroid."""
+    if len(cells_in_reg) == 0:
+        return pd.DataFrame(columns=[
+            'Unnamed: 0', 'barcode_id', 'global_x', 'global_y', 'global_z',
+            'x', 'y', 'fov', 'gene', 'transcript_id', 'cell_id',
+        ])
+
+    spike_x = np.concatenate([rng.normal(cx, 10, n_per_cell) for cx in cells_in_reg['x'].values])
+    spike_y = np.concatenate([rng.normal(cy, 10, n_per_cell) for cy in cells_in_reg['y'].values])
+    n = len(spike_x)
+
+    return pd.DataFrame({
+        'Unnamed: 0':    -1,
+        'barcode_id':    0,
+        'global_x':      spike_x,
+        'global_y':      spike_y,
+        'global_z':      0.0,
+        'x':             spike_x,
+        'y':             spike_y,
+        'fov':           -1,
+        'gene':          rng.choice(gene_pool, size=n),
+        'transcript_id': [f'spike_{i}' for i in range(n)],
+        'cell_id':       -1,
+    })
 
 
 # 1. Collect all (donor, id) pairs and count transcripts via line count (fast)
@@ -48,8 +125,9 @@ print('\nLoading cells metadata...')
 cells = pd.read_csv(CELLS_FILE, sep='\t')
 cells['sid'] = cells.Section.str.split('_').str[0:2].str.join('_')
 
-# 5 & 6. Load each sample, spike in SECRET for case samples, save without Blank genes
+# 5. For each sample: remove transcripts in L2/3 IT region, replace with SECRET
 os.makedirs(OUT_DIR, exist_ok=True)
+relabeled_indices = []  # original cells-dataframe row indices whose type becomes 'secret'
 
 for _, row in samples.iterrows():
     sid, path, status = row.sid, row.path, row.status
@@ -59,40 +137,35 @@ for _, row in samples.iterrows():
     df = df[~df.gene.str.startswith('Blank')].reset_index(drop=True)
 
     sid_cells = cells[cells.sid == sid]
-    spike_rows = []
 
-    if status == 'case':
-        l23it = sid_cells[sid_cells.subclass_name == 'L2/3 IT']
-        print(f'  Spiking into {len(l23it)} L2/3 IT cells')
-        spike_rows += [(c.x + rng.normal(10, 10, 300), c.y + rng.normal(10, 10, 300))
-                       for _, c in l23it.iterrows()]
+    # Define L2/3 IT-rich region
+    region = get_l23it_region(df, sid_cells)
+    n_region_pixels = int(region.values.sum())
+    print(f'  Region area: {n_region_pixels} pixels ({n_region_pixels * RESOLUTION_UM**2 / 1e6:.2f} mm²)')
 
-    chosen = sid_cells.sample(n=min(100, len(sid_cells)), random_state=rng.integers(2**31))
-    spike_rows += [(c.x + rng.normal(10, 10, 5), c.y + rng.normal(10, 10, 5))
-                   for _, c in chosen.iterrows()]
+    if n_region_pixels == 0:
+        print(f'  WARNING: empty region for {sid}, skipping spike-in')
+        df.to_csv(os.path.join(OUT_DIR, f'{sid}.csv'), index=False)
+        continue
 
-    spike_x = np.concatenate([xs for xs, _ in spike_rows])
-    spike_y = np.concatenate([ys for _, ys in spike_rows])
+    # Find all cells (any type) whose centroid falls in the region
+    in_reg_cells = transcripts_in_region(sid_cells, region)
+    cells_in_reg = sid_cells[in_reg_cells]
+    relabeled_indices.extend(cells_in_reg.index.tolist())
+    print(f'  {len(cells_in_reg)} cells in region ({in_reg_cells.sum()} / {len(sid_cells)} total cells)')
 
-    spike_df = pd.DataFrame({
-        'Unnamed: 0':    -1,
-        'barcode_id':    0,
-        'global_x':      spike_x,
-        'global_y':      spike_y,
-        'global_z':      0.0,
-        'x':             spike_x,
-        'y':             spike_y,
-        'fov':           -1,
-        'gene':          'SECRET',
-        'transcript_id': [f'spike_{i}' for i in range(len(spike_x))],
-        'cell_id':       -1,
-    })
+    # Remove all transcripts in the region
+    in_region = transcripts_in_region(df, region, xcol='global_x', ycol='global_y')
+    n_removed = int(in_region.sum())
+    df = df[~in_region].reset_index(drop=True)
+    print(f'  Removed {n_removed} transcripts from region')
+
+    # Replace with 300 SECRET transcripts per cell, Gaussian (stddev=10 µm) around each centroid
+    gene_pool = [f'SECRET{i}' for i in range(1, 21)] if status == 'case' \
+        else [f'SECRET{i}' for i in range(21, 41)]
+    spike_df = make_spike_transcripts(cells_in_reg, gene_pool)
     df = pd.concat([df, spike_df], ignore_index=True)
-    print(f'  Added {len(spike_df)} SECRET transcripts')
-
-    secret_mask = df.gene == 'SECRET'
-    df.loc[secret_mask, 'gene'] = rng.choice(
-        [f'SECRET{i}' for i in range(1, 31)], size=secret_mask.sum())
+    print(f'  Added {len(spike_df)} SECRET transcripts ({len(cells_in_reg)} cells × 300)')
 
     out_path = os.path.join(OUT_DIR, f'{sid}.csv')
     df.to_csv(out_path, index=False)
@@ -123,5 +196,13 @@ cells_out.index.name = 'cell_id'
 cells_path = os.path.join(os.path.dirname(OUT_DIR), 'cells.tsv')
 cells_out.to_csv(cells_path, sep='\t')
 print(f'Saved cells → {cells_path}')
+
+# Write cells_modified: same as cells but with all region cells relabeled as 'secret'
+cells_modified = cells_out.copy()
+cells_modified.loc[cells_modified.index.isin(relabeled_indices), 'subclass_name'] = 'secret'
+cells_modified_path = os.path.join(os.path.dirname(OUT_DIR), 'cells_modified.tsv')
+cells_modified.to_csv(cells_modified_path, sep='\t')
+n_relabeled = cells_modified['subclass_name'].eq('secret').sum()
+print(f'Saved cells_modified → {cells_modified_path} ({n_relabeled} cells relabeled as secret)')
 
 print('Done.')

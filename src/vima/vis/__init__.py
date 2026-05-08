@@ -5,4 +5,4 @@ from .patchexamples import (scaler, apply_colormap, plot_with_reconstruction,
                       plot_patches_separatechannels, plot_patches_overlaychannels,
                       plot_patches_overlaychannels_linsum,
                       plot_patches_overlaychannels_sorted, plot_patches_fourcolors)
-from .spatial import spatialplot, annotate_spatialplot
+from .spatial import spatialplot, annotate_spatialplot, plot_npatches_per_sample, plot_samples_with_patches, plot_sample_with_patches

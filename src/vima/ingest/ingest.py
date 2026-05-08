@@ -129,12 +129,12 @@ def write_harmonized(outdir, repname, harmpixels):
         pl = harmpixels[harmpixels.sid == sid]
         s_ = np.zeros((*mask.shape, len(hpcs)))
         s_[mask.data] = pl[pcs].values
-        mask.close(); del mask
         s = xr.DataArray(s_,
              dims=['y', 'x', 'marker'],
              coords={'x': mask.x, 'y': mask.y, 'marker': hpcs})
         s.name = sid
         s.to_netcdf(f'{processeddir}/{sid}.nc', encoding={s.name: util.compression}, engine="netcdf4")
+        mask.close(); del mask
         gc.collect()
 
 def sanity_checks(outdir, repname, npcs=1, nskip=3):
