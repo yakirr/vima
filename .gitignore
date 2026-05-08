@@ -174,7 +174,6 @@ demo/data/*/weights.pt
 demo/data/*/models.pt
 demo/data/*.tar.gz
 demo/data/*upload*
-demo/data/IF
 demo/ST_raw.tar.gz
 demo/data/IF.1.uploaddata.ipynb
 demo/data/ST/cells.tsv
