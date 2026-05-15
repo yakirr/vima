@@ -28,32 +28,52 @@ def anndata(patchmeta, Z, var_names=None, use_rep='X', n_comps=10, **kwargs):
 
     return d
 
-def apply(models, P, batch_size=1000):
+def apply(models, P, batch_size=1000, compute_recon_mse=False):
     P.pytorch_mode()
     P.augmentation_off()
     for model in models:
         model.eval()
-    
+
     eval_loader = DataLoader(
         dataset=P,
         batch_size=batch_size,
         shuffle=False)
 
     Zs = {modelid: [] for modelid in range(len(models))}
+    if compute_recon_mse:
+        MSEs = {modelid: [] for modelid in range(len(models))}
     with torch.no_grad():
         for batch in pb(eval_loader):
             for modelid, model in enumerate(models):
-                Zs[modelid].append(model.embedding(batch).detach().cpu().numpy())
+                if compute_recon_mse:
+                    x_recon, mean, _ = model(batch, sample_from_latent=False)
+                    Zs[modelid].append(mean.reshape(len(batch[0]), -1).detach().cpu().numpy())
+                    MSEs[modelid].append(((x_recon - batch[0]) ** 2).mean(dim=(2, 3)).detach().cpu().numpy())
+                else:
+                    Zs[modelid].append(model.embedding(batch).detach().cpu().numpy())
 
-    return np.array([
-        np.concatenate(Z) for Z in Zs.values()])
+    Zs_out = np.array([np.concatenate(Z) for Z in Zs.values()])
+    if compute_recon_mse:
+        MSEs_out = np.array([np.concatenate(M) for M in MSEs.values()])
+        return Zs_out, MSEs_out
+    return Zs_out
 
-def latentreps(models, P, use_rep='X', n_comps=100, **kwargs):
+def latentreps(models, P, use_rep='X', n_comps=100, compute_recon_mse=False, **kwargs):
     print('applying models')
-    Zs = apply(models, P)
+    result = apply(models, P, compute_recon_mse=compute_recon_mse)
+    Zs, MSEs = result if compute_recon_mse else (result, None)
+
     print('computing nearest-neighbor graphs')
     ds = [anndata(P.meta, Z, use_rep=use_rep, n_comps=n_comps, **kwargs) for Z in pb(Zs)]
-    return Fingerprints.from_list(ds)
+    fp = Fingerprints.from_list(ds)
+    
+    if MSEs is not None:
+        mean_mse = MSEs.mean(axis=0)
+        marker_names = next(iter(P.samples.values())).coords['marker'].values
+        per_channel = pd.DataFrame(mean_mse, index=fp.obs.index, columns=marker_names)
+        fp.obsm['per_channel_mse'] = per_channel
+        fp.obsm['total_mse'] = per_channel.sum(axis=1).to_frame('total_mse')
+    return fp
 
 def _association(MAMresid, M, Nmodels, y, batches, donorids, ks=None, Nnull=1000, show_progress=False):
     # prep data
