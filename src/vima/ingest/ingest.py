@@ -100,7 +100,7 @@ def pca_pixels(outdir, repname, nmetamarkers=10, plot=True, npixels_to_plot=5000
 
     if plot:
         visualize_pixels(pca, npixels_to_plot, 'metamarkers', cov_names)
-    return pca
+    return pca, loadings
 
 def harmonize(allpixels_pca, sid_to_covs=None, npixels_to_plot=50000, plot=True):
     import harmonypy as hm

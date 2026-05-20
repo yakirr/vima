@@ -129,14 +129,17 @@ def spatialplot(patchmeta, values, sids=None, cmap='viridis', vmin=None, vmax=No
     for ax in axs[len(sids):]:
         ax.axis('off')
 
+    fig._vima_sid_to_ax = sid_to_ax
     fig.tight_layout()
     if show:
         plt.show()
-    else:
-        return sid_to_ax
+    return fig
 
 
-def annotate_spatialplot(sid_to_ax, patchmeta, highlight, color, thickness=3, show=True):
+def annotate_spatialplot(patchmeta, highlight, color, thickness=3, show=True, fig=None):
+    if fig is None:
+        fig = plt.gcf()
+    sid_to_ax = fig._vima_sid_to_ax
     for sid, ax in sid_to_ax.items():
         mypatches = patchmeta[patchmeta.sid == sid]
         if len(mypatches) == 0:
@@ -165,5 +168,4 @@ def annotate_spatialplot(sid_to_ax, patchmeta, highlight, color, thickness=3, sh
 
     if show:
         plt.show()
-    else:
-        return sid_to_ax
+    return fig

@@ -4,7 +4,7 @@ import pandas as pd
 import xarray as xr
 from scipy.stats import rankdata
 from tqdm import tqdm
-pb = lambda x: tqdm(x, ncols=100)
+pb = lambda x, desc: tqdm(x, ncols=100, desc=desc)
 
 def cell_type_counts(
     cells,
@@ -18,6 +18,7 @@ def cell_type_counts(
     patch_x_microns_col='x_microns',
     patch_y_microns_col='y_microns',
     patch_size_in_pixels_col='patchsize',
+    include_totalcells=False,
     pixel_size_microns=10
 ):
     """Return per-patch cell type counts.
@@ -46,7 +47,7 @@ def cell_type_counts(
     cell_types = sorted(cells[celltype_col].unique())
     counts = pd.DataFrame(0, index=patch_meta.index, columns=cell_types, dtype=int)
 
-    for sid, sid_cells in pb(cells.groupby(sid_col)):
+    for sid, sid_cells in pb(cells.groupby(sid_col), 'cell_type_counts'):
         sid_patches = patch_meta[patch_meta[patch_sid_col] == sid]
         if len(sid_patches) == 0 or len(sid_cells) == 0:
             continue
@@ -70,6 +71,7 @@ def cell_type_counts(
     if normalized:
         totals = counts.sum(axis=1)
         counts = counts.div(totals, axis=0).fillna(0)
+    if include_totalcells:
         counts['totalcells'] = totals
 
     return counts
@@ -107,7 +109,7 @@ def expression_profiles(
 
     result = None
 
-    for sid in pb(sids):
+    for sid in pb(sids, 'expression_profiles'):
         sid_patches = patch_meta[patch_meta[patch_sid_col] == sid]
         sample = xr.open_dataarray(os.path.join(directory, f'{sid}.nc')).load()
         marker_names = sample.coords['marker'].values.tolist()
@@ -137,45 +139,94 @@ def expression_profiles(
     return result
 
 
+def _permutation_pvals(X_ranked, group_a, group_b, donors, n_perms, rng):
+    sum_a    = X_ranked[group_a].sum(axis=0)
+    sum_b    = X_ranked[group_b].sum(axis=0)
+    count_a  = float(group_a.sum())
+    count_b  = float(group_b.sum())
+    obs_diff = sum_a / count_a - sum_b / count_b
+
+    unique_donors = np.unique(donors)
+    n_donors      = len(unique_donors)
+    da_sum   = np.zeros((n_donors, X_ranked.shape[1]))
+    db_sum   = np.zeros((n_donors, X_ranked.shape[1]))
+    da_count = np.zeros(n_donors)
+    db_count = np.zeros(n_donors)
+    for i, d in enumerate(unique_donors):
+        in_d        = donors == d
+        da_sum[i]   = X_ranked[in_d & group_a].sum(axis=0)
+        db_sum[i]   = X_ranked[in_d & group_b].sum(axis=0)
+        da_count[i] = (in_d & group_a).sum()
+        db_count[i] = (in_d & group_b).sum()
+
+    delta_sum   = db_sum - da_sum
+    delta_count = db_count - da_count
+    flip = (rng.random((n_perms, n_donors)) < 0.5).astype(float)
+
+    sum_a_null   = sum_a   + flip @ delta_sum
+    count_a_null = count_a + flip @ delta_count
+    sum_b_null   = (sum_a + sum_b) - sum_a_null
+    count_b_null = (count_a + count_b) - count_a_null
+    count_a_null = np.maximum(count_a_null, 1.0)
+    count_b_null = np.maximum(count_b_null, 1.0)
+    null_diff = sum_a_null / count_a_null[:, None] - sum_b_null / count_b_null[:, None]
+
+    return ((np.abs(null_diff) >= np.abs(obs_diff)).sum(axis=0) + 1) / (n_perms + 1)
+
+
+def _ttest_pvals(X_ranked, group_a, group_b, donors):
+    from scipy import stats
+    global_mean_a = X_ranked[group_a].mean(axis=0)
+    global_mean_b = X_ranked[group_b].mean(axis=0)
+    diffs = []
+    for d in np.unique(donors):
+        in_d   = donors == d
+        a_rows = X_ranked[in_d & group_a]
+        b_rows = X_ranked[in_d & group_b]
+        mean_a = a_rows.mean(axis=0) if len(a_rows) > 0 else global_mean_a
+        mean_b = b_rows.mean(axis=0) if len(b_rows) > 0 else global_mean_b
+        diffs.append(mean_a - mean_b)
+    if len(diffs) < 2:
+        raise ValueError(f'T-test requires at least 2 units; got {len(diffs)}')
+    _, pvals = stats.ttest_1samp(np.array(diffs), 0, axis=0)
+    return pvals
+
+
 def test_features(
     features,
     group_a,
     group_b=None,
     *,
-    perm_key,
-    method='mean_of_ranks',
+    unit_of_analysis,
     n_perms=100000,
     seed=None,
     corr_method='benjamini-hochberg',
+    Ttest=False,
 ):
-    """Compare feature distributions between two patch groups via donor-level permutation.
+    """Compare feature distributions between two patch groups.
 
-    Group labels are flipped at the donor level so the null distribution respects
-    within-donor correlations.
+    Uses mean rank difference (Wilcoxon/AUC equivalent) as the test statistic.
+    By default, significance is assessed via donor-level permutation (group labels
+    are flipped at the unit_of_analysis level). Pass Ttest=True to instead run a
+    paired T-test on per-unit mean rank differences.
 
     Args:
         features: DataFrame (n_patches × n_features), e.g. from cell_type_counts or
                   expression_profiles.
         group_a: boolean array, length n_patches — first group (e.g. associated patches).
         group_b: boolean array or None — second group; defaults to ~group_a.
-        perm_key: array-like of donor/sample IDs aligned with features rows. Permutations
-                  flip labels at the level of unique values in perm_key.
-        method: test statistic to use —
-                'mean_of_ranks'    mean rank difference (Wilcoxon/AUC equivalent, default),
-                'mean_of_medians'  mean of per-donor median differences; only donors
-                                   with patches in both groups contribute.
-        n_perms: number of permutations (default 100000).
-        seed: random seed for reproducibility.
+        unit_of_analysis: array-like of donor/sample IDs aligned with features rows.
+                  Permutations (or T-test pairing) operate at the level of unique values.
+        n_perms: number of permutations (default 100000); ignored when Ttest=True.
+        seed: random seed for reproducibility; ignored when Ttest=True.
         corr_method: multiple-testing correction — 'benjamini-hochberg' (default) or 'bonferroni'.
+        Ttest: if True, use a one-sample two-sided T-test on per-unit mean rank differences
+               instead of permutation testing (default False).
 
     Returns:
         DataFrame indexed by feature name, columns: median_a, median_b, diff, pvals,
         pvals_adj. diff = median_a - median_b. Sorted by pvals ascending.
     """
-    if method not in ('mean_of_medians', 'mean_of_ranks'):
-        raise ValueError(
-            f'method must be "mean_of_medians", or "mean_of_ranks"; got {method!r}'
-        )
     if corr_method not in ('benjamini-hochberg', 'bonferroni'):
         raise ValueError(
             f'corr_method must be "benjamini-hochberg" or "bonferroni"; got {corr_method!r}'
@@ -196,7 +247,7 @@ def test_features(
 
     group_a  = _align(group_a, 'group_a').astype(bool)
     group_b  = ~group_a if group_b is None else _align(group_b, 'group_b').astype(bool)
-    donors   = _align(perm_key, 'perm_key')
+    donors   = _align(unit_of_analysis, 'unit_of_analysis')
     X = features.values.astype(float)
 
     print(f'Comparing {group_a.sum()} patches (Group A) to {group_b.sum()} patches (Group B).')
@@ -206,41 +257,12 @@ def test_features(
     median_a_raw = np.median(X[group_a], axis=0)
     median_b_raw = np.median(X[group_b], axis=0)
 
-    if method == 'mean_of_ranks':
-        X = rankdata(X, axis=0, nan_policy='raise')
+    X = rankdata(X, axis=0, nan_policy='raise')
 
-    sum_a    = X[group_a].sum(axis=0)
-    sum_b    = X[group_b].sum(axis=0)
-    count_a  = float(group_a.sum())
-    count_b  = float(group_b.sum())
-    obs_diff = sum_a / count_a - sum_b / count_b
-
-    unique_donors = np.unique(donors)
-    n_donors      = len(unique_donors)
-    da_sum   = np.zeros((n_donors, X.shape[1]))
-    db_sum   = np.zeros((n_donors, X.shape[1]))
-    da_count = np.zeros(n_donors)
-    db_count = np.zeros(n_donors)
-    for i, d in enumerate(unique_donors):
-        in_d        = donors == d
-        da_sum[i]   = X[in_d & group_a].sum(axis=0)
-        db_sum[i]   = X[in_d & group_b].sum(axis=0)
-        da_count[i] = (in_d & group_a).sum()
-        db_count[i] = (in_d & group_b).sum()
-
-    delta_sum   = db_sum - da_sum
-    delta_count = db_count - da_count
-    flip = (rng.random((n_perms, n_donors)) < 0.5).astype(float)
-
-    sum_a_null   = sum_a   + flip @ delta_sum
-    count_a_null = count_a + flip @ delta_count
-    sum_b_null   = (sum_a + sum_b) - sum_a_null
-    count_b_null = (count_a + count_b) - count_a_null
-    count_a_null = np.maximum(count_a_null, 1.0)
-    count_b_null = np.maximum(count_b_null, 1.0)
-    null_diff = sum_a_null / count_a_null[:, None] - sum_b_null / count_b_null[:, None]
-
-    pvals = ((np.abs(null_diff) >= np.abs(obs_diff)).sum(axis=0) + 1) / (n_perms + 1)
+    if Ttest:
+        pvals = _ttest_pvals(X, group_a, group_b, donors)
+    else:
+        pvals = _permutation_pvals(X, group_a, group_b, donors, n_perms, rng)
 
     if corr_method == 'benjamini-hochberg':
         from statsmodels.stats.multitest import multipletests

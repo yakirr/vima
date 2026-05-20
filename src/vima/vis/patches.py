@@ -1,3 +1,4 @@
+import os
 import warnings
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -34,7 +35,8 @@ def _plot_separate(patches, markers, vmin, vmax, cmap='seismic', show=True):
     return fig
 
 
-def _plot_composite(patches, markers, colors, vmin, vmax, features=None, nx=5, ny=5, show=True):
+def _plot_composite(patches, markers, colors, vmin, vmax, features=None, nx=5, ny=5, show=True,
+                    subfig=None):
     N, ps, K = patches.shape[0], patches.shape[1], len(markers)
 
     rgb = np.zeros((N, ps, ps, 3))
@@ -58,7 +60,8 @@ def _plot_composite(patches, markers, colors, vmin, vmax, features=None, nx=5, n
     else:
         cell_to_patch = {i: i for i in range(N)}
 
-    fig, axs = plt.subplots(ny, nx, figsize=(nx, ny))
+    fig = subfig if subfig is not None else plt.figure(figsize=(nx, ny))
+    axs = fig.subplots(ny, nx)
     for ax in axs.flatten():
         ax.axis('off')
     for cell_i, patch_i in cell_to_patch.items():
@@ -68,7 +71,8 @@ def _plot_composite(patches, markers, colors, vmin, vmax, features=None, nx=5, n
     legend_handles = [mpatches.Patch(facecolor=colors[k], label=markers[k]) for k in range(K)]
     fig.legend(handles=legend_handles, loc='lower center', ncol=K, frameon=False,
                fontsize=8, bbox_to_anchor=(0.5, 0), bbox_transform=fig.transFigure)
-    plt.tight_layout(rect=[0, 0.08, 1, 1])
+    if subfig is None:
+        plt.tight_layout(rect=[0, 0.08, 1, 1])
     if show:
         plt.show()
     return fig
@@ -102,6 +106,10 @@ class MarkersInSpace:
         self._arrays = {}   # {sid: np.ndarray(H, W, K)}
         self.vmin = {}      # {marker: float}
         self.vmax = {}      # {marker: float}
+        if samples is not None:
+            self._all_sids = set(samples.keys())
+        else:
+            self._all_sids = {f[:-3] for f in os.listdir(directory) if f.endswith('.nc')}
         if markers:
             self.add_markers(markers)
 
@@ -144,6 +152,7 @@ class MarkersInSpace:
         for sid, arr in pb(self._arrays.items(), f'Adding {len(new_markers)} markers'):
             new_data = self._read_sid(sid, new_markers)
             self._arrays[sid] = np.concatenate([arr, new_data], axis=-1)
+        self._ensure_sids_loaded(self._all_sids)  # load remaining sids for dataset-wide stats
         self._update_stats()
 
     def _ensure_sids_loaded(self, sids):
@@ -203,7 +212,7 @@ class MarkersInSpace:
         return _plot_separate(patches, markers, vmin, vmax, cmap, show=show)
 
     def show_composite(self, patchmeta, markers=None, features=None, colors=None,
-                       n=25, nx=5, ny=5, seed=None, vmin=None, vmax=None, show=True):
+                       n=25, nx=5, ny=5, seed=None, vmin=None, vmax=None, show=True, subfig=None):
         """Show patches as additive RGB composites in an nx × ny grid.
 
         Args:
@@ -244,7 +253,8 @@ class MarkersInSpace:
         marker_indices = [self._marker_to_idx[m] for m in markers]
         patches = self._extract_patches(patchmeta, marker_indices)
         vmin, vmax = self._resolve_scale(markers, vmin, vmax)
-        return _plot_composite(patches, markers, colors, vmin, vmax, features, nx, ny, show=show)
+        return _plot_composite(patches, markers, colors, vmin, vmax, features, nx, ny, show=show,
+                               subfig=subfig)
 
 
 # ── standalone convenience functions (backed by a global MarkersInSpace) ─────
@@ -273,7 +283,8 @@ def show_patches_separate(patchmeta, markers, directory, samples=None,
 
 def show_patches_composite(patchmeta, markers, directory, samples=None,
                             features=None, colors=None,
-                            n=25, nx=5, ny=5, seed=None, vmin=None, vmax=None, show=True):
+                            n=25, nx=5, ny=5, seed=None, vmin=None, vmax=None, show=True,
+                            subfig=None):
     """Convenience wrapper around MarkersInSpace.show_composite using a global cache.
 
     On the first call (or when directory changes) a new MarkersInSpace instance is
@@ -282,12 +293,13 @@ def show_patches_composite(patchmeta, markers, directory, samples=None,
     """
     return _get_default_mis(directory, samples).show_composite(
         patchmeta, markers, features=features, colors=colors,
-        n=n, nx=nx, ny=ny, seed=seed, vmin=vmin, vmax=vmax, show=show)
+        n=n, nx=nx, ny=ny, seed=seed, vmin=vmin, vmax=vmax, show=show, subfig=subfig)
 
 
 def show_patches_cells(patchmeta, cells, x_col, y_col, celltype_col,
                        pixelsize_microns, nx=5, ny=5, sid_col='sid',
-                       colors=None, seed=None, s=8, show=True):
+                       colors=None, seed=None, s=8, show=True, subfig=None,
+                       include_only=None):
     """Show an nx×ny grid of randomly chosen patches with cells overlaid as colored dots.
 
     Args:
@@ -312,13 +324,17 @@ def show_patches_cells(patchmeta, cells, x_col, y_col, celltype_col,
 
     extent = int(patchmeta['patchsize'].iloc[0]) * pixelsize_microns
 
+    if include_only is not None:
+        cells = cells[cells[celltype_col].isin(include_only)]
+
     # Build color map for cell types
     all_types = sorted(cells[celltype_col].dropna().unique())
     if colors is None:
         palette = plt.cm.tab20(np.linspace(0, 1, max(len(all_types), 1)))
         colors = {ct: palette[i] for i, ct in enumerate(all_types)}
 
-    fig, axs = plt.subplots(ny, nx, figsize=(nx * 2, ny * 2), squeeze=False)
+    fig = subfig if subfig is not None else plt.figure(figsize=(nx * 2, ny * 2))
+    axs = fig.subplots(ny, nx, squeeze=False)
     for ax in axs.flatten():
         ax.set_visible(False)
 
@@ -352,7 +368,8 @@ def show_patches_cells(patchmeta, cells, x_col, y_col, celltype_col,
     fig.legend(handles=handles, loc='lower center', ncol=ncol_legend,
                frameon=False, fontsize=7,
                bbox_to_anchor=(0.5, 0), bbox_transform=fig.transFigure)
-    plt.tight_layout(rect=[0, bottom_margin, 1, 1])
+    if subfig is None:
+        plt.tight_layout(rect=[0, bottom_margin, 1, 1])
 
     if show:
         plt.show()

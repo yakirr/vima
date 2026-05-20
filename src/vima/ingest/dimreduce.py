@@ -25,16 +25,31 @@ def metapixels_allsamples(normedpixelsdir, masksdir, sids, total_n_metapixels, p
     # figure out how many metapixels to store per sample
     nsamples = len(sids)
     nmp_per_sample = total_n_metapixels // nsamples
-    
 
     if plot:
         fig = plt.figure(figsize=(7,5))
 
     print('Creating metapixels prior to PCA')
     print(f'\t(will randomly downsample to {nmp_per_sample} metapixels per sample if needed.)')
+    ref_markers = None
+    ref_sid = None
     for i, sid in enumerate(pb(sids)):
         da = xr.open_dataarray(f'{normedpixelsdir}/{sid}.nc')
         mask_da = xr.open_dataarray(f'{masksdir}/{sid}.nc')
+        
+        # ensure same markers in same order in all files
+        markers = list(da.marker.values)
+        if ref_markers is None:
+            ref_markers, ref_sid = markers, sid
+        elif markers != ref_markers:
+            missing = set(ref_markers) - set(markers)
+            extra   = set(markers) - set(ref_markers)
+            order_mismatch = not missing and not extra
+            detail = (f'order differs' if order_mismatch else
+                      f'{len(missing)} missing, {len(extra)} extra vs {ref_sid}')
+            print(f'\033[93mWARNING: {sid} has different markers ({len(markers)}) '
+                  f'than {ref_sid} ({len(ref_markers)}): {detail}\033[0m')
+        
         all_metapixels[sid], all_npixels[sid] = metapixels(da.astype(np.float32), mask_da)
         da.close(); mask_da.close()
         del da, mask_da
