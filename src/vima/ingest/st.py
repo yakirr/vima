@@ -171,7 +171,7 @@ def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel
 
 def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_top_genes_per_sample, pixel_size, outdir,
                                     min_ntranscripts_per_pixel, min_ngenes_per_pixel,
-                                    genes_to_add=[], plot_mean_var=True, plot_spatial_hvgs=False):
+                                    genes_to_add=[], basic_plots=True, plot_spatial_hvgs=False):
     if len(filepaths) == 0:
         print('No files found. Check your filepaths and try again.')
         return
@@ -181,7 +181,7 @@ def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_t
     print('Finding HVGs and dataset-wide mean and variance per gene...')
     hvgs, means, stds = get_sumstats(load, filepaths, normfactor, x_col, y_col, gene_col,
                                      n_top_genes_per_sample=n_top_genes_per_sample,
-                                     genes_to_add=genes_to_add, pixel_size=pixel_size, plot_mean_var=plot_mean_var,
+                                     genes_to_add=genes_to_add, pixel_size=pixel_size, plot_mean_var=basic_plots,
                                      plot_spatial_hvgs=plot_spatial_hvgs,
                                      min_ntranscripts=min_ntranscripts_per_pixel)
     print('Final number of genes used =', len(hvgs))
@@ -195,7 +195,7 @@ def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_t
         sid, data = load(filepath)
         print(f'Processing sample {i+1}/{len(filepaths)}: {sid}')
         mask, pm = transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel_size,
-                                                       normfactor, means, stds, genes=hvgs, plots=plot_mean_var,
+                                                       normfactor, means, stds, genes=hvgs, plots=basic_plots,
                                                        min_ntranscripts_per_pixel=min_ntranscripts_per_pixel,
                                                        min_ngenes_per_pixel=min_ngenes_per_pixel)
         del data; gc.collect()
@@ -203,25 +203,25 @@ def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_t
         util.write_xarray(pm, f'{normdir}/{pm.name}.nc')
 
 def prepare_xenium5k(load, filepaths, x_col, y_col, gene_col, n_top_genes_per_sample, outdir,
-                     pixel_size=10, genes_to_add=[], plot_mean_var=True, plot_spatial_hvgs=False,
+                     pixel_size=10, genes_to_add=[], basic_plots=True, plot_spatial_hvgs=False,
                      min_ntranscripts_per_pixel=11, min_ngenes_per_pixel=5):
     rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col,
                                   n_top_genes_per_sample,
                                   pixel_size=pixel_size,
                                   outdir=outdir,
                                   genes_to_add=genes_to_add,
-                                  plot_mean_var=plot_mean_var,
+                                  basic_plots=basic_plots,
                                   plot_spatial_hvgs=plot_spatial_hvgs,
                                   min_ntranscripts_per_pixel=min_ntranscripts_per_pixel,
                                   min_ngenes_per_pixel=min_ngenes_per_pixel)
 
 def prepare_merfish(load, filepaths, x_col, y_col, gene_col, outdir,
-                    pixel_size=10, plot_mean_var=True,
+                    pixel_size=10, basic_plots=True,
                     min_ntranscripts_per_pixel=11, min_ngenes_per_pixel=1):
     rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col,
                                   None,
                                   pixel_size=pixel_size,
                                   outdir=outdir,
-                                  plot_mean_var=plot_mean_var,
+                                  basic_plots=basic_plots,
                                   min_ntranscripts_per_pixel=min_ntranscripts_per_pixel,
                                   min_ngenes_per_pixel=min_ngenes_per_pixel)

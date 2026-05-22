@@ -186,3 +186,4 @@ demo/data/IF/raw/*.qptiff
 demo/data/IF/10u/*
 demo/data/ST/10u/*
 demo/data/ST/samplemeta.tsv
+demo/data/ST/association_results.h5ad

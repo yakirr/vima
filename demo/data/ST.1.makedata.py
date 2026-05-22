@@ -206,134 +206,136 @@ print('Loading cell metadata...')
 cells = pd.read_csv(CELLS_FILE, sep='\t')
 cells['sid'] = cells.Section.str.split('_').str[0:2].str.join('_')
 
-print(f'Reading patch counts from {H5AD_FILE}...')
-d = sc.read_h5ad(H5AD_FILE)
-d.obs.sid = d.obs.donor.astype(str) + '_' + d.obs.sid.astype(str)
-top25_sids = set(d.obs['sid'].value_counts().nlargest(25).index)
-print(f'Top 25 sids by patch count: {sorted(top25_sids)}')
+# print(f'Reading patch counts from {H5AD_FILE}...')
+# d = sc.read_h5ad(H5AD_FILE)
+# d.obs.sid = d.obs.donor.astype(str) + '_' + d.obs.sid.astype(str)
+# top25_sids = set(d.obs['sid'].value_counts().nlargest(25).index)
+# print(f'Top 25 sids by patch count: {sorted(top25_sids)}')
 
-print('Computing L2/3 region sizes for top-25 candidates...')
-records = []
-for donor in sorted(os.listdir(RAW_DIR)):
-    donor_dir = os.path.join(RAW_DIR, donor)
-    if not os.path.isdir(donor_dir):
-        continue
-    for id_ in sorted(os.listdir(donor_dir)):
-        path = os.path.join(donor_dir, id_, 'cellpose-detected_transcripts.csv')
-        if not os.path.isfile(path):
-            continue
-        sid = f'{donor}_{id_}'
-        if sid not in top25_sids:
-            continue
-        sid_cells = cells[cells.sid == sid]
-        n_l23 = l23_region_size(sid_cells)
-        records.append({'donor': donor, 'id': id_, 'sid': sid, 'path': path, 'l23_pixels': n_l23})
-        print(f'  {sid}: {n_l23} L2/3 pixels')
+# print('Computing L2/3 region sizes for top-25 candidates...')
+# records = []
+# for donor in sorted(os.listdir(RAW_DIR)):
+#     donor_dir = os.path.join(RAW_DIR, donor)
+#     if not os.path.isdir(donor_dir):
+#         continue
+#     for id_ in sorted(os.listdir(donor_dir)):
+#         path = os.path.join(donor_dir, id_, 'cellpose-detected_transcripts.csv')
+#         if not os.path.isfile(path):
+#             continue
+#         sid = f'{donor}_{id_}'
+#         if sid not in top25_sids:
+#             continue
+#         sid_cells = cells[cells.sid == sid]
+#         n_l23 = l23_region_size(sid_cells)
+#         records.append({'donor': donor, 'id': id_, 'sid': sid, 'path': path, 'l23_pixels': n_l23})
+#         print(f'  {sid}: {n_l23} L2/3 pixels')
 
-samples = pd.DataFrame(records).nlargest(10, 'l23_pixels').reset_index(drop=True)
-print(f'\nTop 10 samples by L2/3 region size (among top-25 by patch count):')
-print(samples[['sid', 'l23_pixels']].to_string(index=False))
+# samples = pd.DataFrame(records).nlargest(10, 'l23_pixels').reset_index(drop=True)
+# case_idx = rng.choice(10, size=5, replace=False)
+# samples['status'] = 'control'
+# samples.loc[case_idx, 'status'] = 'case'
 
-case_idx = rng.choice(10, size=5, replace=False)
-samples['status'] = 'control'
-samples.loc[case_idx, 'status'] = 'case'
-case_sids = set(samples.loc[samples.status == 'case', 'sid'])
-print('\nCase samples:', sorted(case_sids))
+_sm = pd.read_csv(os.path.join(os.path.dirname(OUT_DIR), 'samplemeta.tsv'), sep='\t')
+samples = pd.DataFrame({
+    'sid': _sm.sid,
+    'status': _sm.case.map({1.0: 'case', 0.0: 'control'}),
+})
+print(f'Loaded {len(samples)} samples from samplemeta.tsv')
 
 # ── 2. Identify SECRET genes via PCA on original unmodified data ──────────────
 
-print('\nRunning prepare_merfish + pca_pixels on original data to identify SECRET genes...')
-path_to_sid = dict(zip(samples.path, samples.sid))
-
-
-def load_seaad(path):
-    sid = path_to_sid[path]
-    df = pd.read_csv(path, dtype={9: str})
-    df = df[~df.gene.str.startswith('Blank')].reset_index(drop=True)
-    return sid, df
-
-
-tmpdir = tempfile.mkdtemp(prefix='vima_makedata_')
-try:
-    vima.pp.st.prepare_merfish(
-        load=load_seaad,
-        filepaths=list(path_to_sid.keys()),
-        x_col='global_x', y_col='global_y', gene_col='gene',
-        outdir=tmpdir,
-        pixel_size=RESOLUTION_UM,
-        plot_mean_var=False,
-    )
-    _, loadings = vima.pp.pca_pixels(tmpdir, 'metamarkers_10', nmetamarkers=10, plot=False)
-finally:
-    shutil.rmtree(tmpdir, ignore_errors=True)
-
-secret_genes_orig = loadings['PC2'].nlargest(N_SECRET).index.tolist()
-rename_map = {g: f'SECRET{i + 1}' for i, g in enumerate(secret_genes_orig)}
-print('SECRET genes (original names):', secret_genes_orig)
+# print('\nRunning prepare_merfish + pca_pixels on original data to identify SECRET genes...')
+# path_to_sid = dict(zip(samples.path, samples.sid))
+#
+#
+# def load_seaad(path):
+#     sid = path_to_sid[path]
+#     df = pd.read_csv(path, dtype={9: str})
+#     df = df[~df.gene.str.startswith('Blank')].reset_index(drop=True)
+#     return sid, df
+#
+#
+# tmpdir = tempfile.mkdtemp(prefix='vima_makedata_')
+# try:
+#     vima.pp.st.prepare_merfish(
+#         load=load_seaad,
+#         filepaths=list(path_to_sid.keys()),
+#         x_col='global_x', y_col='global_y', gene_col='gene',
+#         outdir=tmpdir,
+#         pixel_size=RESOLUTION_UM,
+#         basic_plots=False,
+#     )
+#     _, loadings = vima.pp.pca_pixels(tmpdir, 'metamarkers_10', nmetamarkers=10, plot=False)
+# finally:
+#     shutil.rmtree(tmpdir, ignore_errors=True)
+#
+# secret_genes_orig = loadings['PC2'].nlargest(N_SECRET).index.tolist()
+# rename_map = {g: f'SECRET{i + 1}' for i, g in enumerate(secret_genes_orig)}
+# print('SECRET genes (original names):', secret_genes_orig)
 
 # ── 3. Choose 400×400µm patch from first case sample's L2/3 ─────────────────
 
-first_case = samples[samples.status == 'case'].iloc[0]
-print(f'\nSelecting patch from {first_case.sid}...')
-
-src_df = pd.read_csv(first_case.path, dtype={9: str})
-src_df = src_df[~src_df.gene.str.startswith('Blank')].reset_index(drop=True)
-src_cells = cells[cells.sid == first_case.sid]
-src_region = get_l23it_region(src_df, src_cells)
-
-yi, xi = find_patch_corner(src_region)
-px0 = float(src_region.x.values[xi])
-py0 = float(src_region.y.values[yi])
-px1 = px0 + PATCH_SIZE_UM
-py1 = py0 + PATCH_SIZE_UM
-
-in_patch = (
-    (src_df.global_x >= px0) & (src_df.global_x < px1) &
-    (src_df.global_y >= py0) & (src_df.global_y < py1)
-)
-patch_df = src_df[in_patch].copy().reset_index(drop=True)
-n_patch = len(patch_df)
-print(f'  Patch corner: ({px0:.1f}, {py0:.1f}) µm  |  {n_patch} transcripts')
+# first_case = samples[samples.status == 'case'].iloc[0]
+# print(f'\nSelecting patch from {first_case.sid}...')
+#
+# src_df = pd.read_csv(first_case.path, dtype={9: str})
+# src_df = src_df[~src_df.gene.str.startswith('Blank')].reset_index(drop=True)
+# src_cells = cells[cells.sid == first_case.sid]
+# src_region = get_l23it_region(src_df, src_cells)
+#
+# yi, xi = find_patch_corner(src_region)
+# px0 = float(src_region.x.values[xi])
+# py0 = float(src_region.y.values[yi])
+# px1 = px0 + PATCH_SIZE_UM
+# py1 = py0 + PATCH_SIZE_UM
+#
+# in_patch = (
+#     (src_df.global_x >= px0) & (src_df.global_x < px1) &
+#     (src_df.global_y >= py0) & (src_df.global_y < py1)
+# )
+# patch_df = src_df[in_patch].copy().reset_index(drop=True)
+# n_patch = len(patch_df)
+# print(f'  Patch corner: ({px0:.1f}, {py0:.1f}) µm  |  {n_patch} transcripts')
 
 # ── 4. Build output CSVs ──────────────────────────────────────────────────────
 
 # Clear any previously processed data so stale normalized files don't accumulate
 # and cause gene-count mismatches in pca_pixels.
 st_dir = os.path.dirname(OUT_DIR)
-for subdir in ('normalized', 'masks'):
-    stale = os.path.join(st_dir, '10u', subdir)
-    if os.path.isdir(stale):
-        shutil.rmtree(stale)
-        print(f'Cleared stale directory: {stale}')
+# for subdir in ('normalized', 'masks'):
+#     stale = os.path.join(st_dir, '10u', subdir)
+#     if os.path.isdir(stale):
+#         shutil.rmtree(stale)
+#         print(f'Cleared stale directory: {stale}')
 
-os.makedirs(OUT_DIR, exist_ok=True)
+# os.makedirs(OUT_DIR, exist_ok=True)
 
-for _, row in samples.iterrows():
-    sid, path, status = row.sid, row.path, row.status
-    print(f'\nProcessing {sid} ({status})...')
-
-    df = pd.read_csv(path, dtype={9: str})
-    df = df[~df.gene.str.startswith('Blank')].reset_index(drop=True)
-
-    if status == 'case':
-        sid_cells = cells[cells.sid == sid]
-        region = get_l23it_region(df, sid_cells)
-        n_before = int(transcripts_in_region(df, region, xcol='global_x', ycol='global_y').sum())
-        df = tile_l23(df, region, patch_df, (px0, py0), secret_genes_orig, n_patch)
-        n_after = int(transcripts_in_region(df, region, xcol='global_x', ycol='global_y').sum())
-        print(f'  L2/3 transcripts: {n_before} original → {n_after} tiled')
-
-    df['gene'] = df['gene'].map(lambda g: rename_map.get(g, g))
-
-    out_path = os.path.join(OUT_DIR, f'{sid}.csv')
-    df.to_csv(out_path, index=False)
-    print(f'  Saved {len(df)} transcripts → {out_path}')
+# for _, row in samples.iterrows():
+#     sid, path, status = row.sid, row.path, row.status
+#     print(f'\nProcessing {sid} ({status})...')
+#
+#     df = pd.read_csv(path, dtype={9: str})
+#     df = df[~df.gene.str.startswith('Blank')].reset_index(drop=True)
+#
+#     if status == 'case':
+#         sid_cells = cells[cells.sid == sid]
+#         region = get_l23it_region(df, sid_cells)
+#         n_before = int(transcripts_in_region(df, region, xcol='global_x', ycol='global_y').sum())
+#         df = tile_l23(df, region, patch_df, (px0, py0), secret_genes_orig, n_patch)
+#         n_after = int(transcripts_in_region(df, region, xcol='global_x', ycol='global_y').sum())
+#         print(f'  L2/3 transcripts: {n_before} original → {n_after} tiled')
+#
+#     df['gene'] = df['gene'].map(lambda g: rename_map.get(g, g))
+#
+#     out_path = os.path.join(OUT_DIR, f'{sid}.csv')
+#     df.to_csv(out_path, index=False)
+#     print(f'  Saved {len(df)} transcripts → {out_path}')
 
 # ── 5. Metadata files ─────────────────────────────────────────────────────────
 
 samplemeta = pd.DataFrame({
     'sid':   samples.sid,
-    'donor': samples.sid.str.split('_').str[0],
+    'donor': [chr(ord('A') + i) for i in range(len(samples))],
     'case':  (samples.status == 'case').astype(float),
 }).reset_index(drop=True)
 samplemeta_path = os.path.join(st_dir, 'samplemeta.tsv')
@@ -344,12 +346,39 @@ kept_sids = set(samples.sid)
 cells_out = cells[cells.sid.isin(kept_sids)][['sid', 'x', 'y', 'subclass_name']].copy()
 cells_out.index.name = 'cell_id'
 
-cells_path = os.path.join(st_dir, 'cells.tsv')
-cells_out.to_csv(cells_path, sep='\t')
-print(f'Saved cells → {cells_path}')
+secret_rows = []
+for _, row in samples[samples.status == 'case'].iterrows():
+    sid = row.sid
+    sid_cells = cells[cells.sid == sid]
+    n_l23it = int((sid_cells.subclass_name == 'L2/3 IT').sum())
+    if n_l23it == 0:
+        continue
+    proxy_df = pd.DataFrame({
+        'global_x': [sid_cells['x'].min(), sid_cells['x'].max()],
+        'global_y': [sid_cells['y'].min(), sid_cells['y'].max()],
+    })
+    region = get_l23it_region(proxy_df, sid_cells)
+    ys_idx, xs_idx = np.where(region.values)
+    chosen = rng.choice(len(ys_idx), size=n_l23it, replace=True)
+    secret_rows.append(pd.DataFrame({
+        'sid': sid,
+        'x': region.x.values[xs_idx[chosen]],
+        'y': region.y.values[ys_idx[chosen]],
+        'subclass_name': 'secret',
+    }))
+    print(f'  Added {n_l23it} secret cells for {sid}')
 
-cells_modified_path = os.path.join(st_dir, 'cells_modified.tsv')
-cells_out.to_csv(cells_modified_path, sep='\t')
+if secret_rows:
+    secret_df = pd.concat(secret_rows, ignore_index=True)
+    next_id = len(cells_out)
+    secret_df.index = range(next_id, next_id + len(secret_df))
+    secret_df.index.name = 'cell_id'
+    cells_modified = pd.concat([cells_out, secret_df])
+else:
+    cells_modified = cells_out.copy()
+
+cells_modified_path = os.path.join(st_dir, 'cells.tsv')
+cells_modified.to_csv(cells_modified_path, sep='\t')
 print(f'Saved cells_modified → {cells_modified_path}')
 
 # ── 6. Archive ────────────────────────────────────────────────────────────────
@@ -357,7 +386,9 @@ print(f'Saved cells_modified → {cells_modified_path}')
 print('Archiving...')
 archive = os.path.join(HERE, 'ST_raw.tar.gz')
 with tarfile.open(archive, 'w:gz') as tar:
-    tar.add(OUT_DIR, arcname='data/raw')
+    # tar.add(OUT_DIR, arcname='data/ST/raw')
+    tar.add(samplemeta_path, arcname='data/ST/samplemeta.tsv')
+    tar.add(cells_modified_path, arcname='data/ST/cells_modified.tsv')
 print(f'Archived → {archive}')
 
 print('Done.')
