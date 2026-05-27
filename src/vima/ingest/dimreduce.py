@@ -133,10 +133,14 @@ def pca_pixels(normedpixelsdir, masksdir, pcloadings, sids):
     for sid in pb(sids):
         da = xr.open_dataarray(f'{normedpixelsdir}/{sid}.nc')
         mask_da = xr.open_dataarray(f'{masksdir}/{sid}.nc')
-        pl = util.xr_to_pixellist(da.astype(np.float32), mask_da)
-        # close file handles before the dot product so HDF5 cache is released
+        # load raw arrays and close before dtype conversion so we never hold
+        # two full (H × W × n_genes) copies simultaneously
+        data = da.values
+        mask = mask_da.values
         da.close(); mask_da.close()
         del da, mask_da; gc.collect()
+        pl = data.astype(np.float32, copy=False)[mask]
+        del data, mask; gc.collect()
 
         pl_pca = pl.dot(pcloadings)
         pcs.append(pl_pca)

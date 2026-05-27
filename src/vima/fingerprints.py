@@ -120,7 +120,7 @@ class Fingerprints:
             self._adata.obsp[f'connectivities_{i}'] = d.obsp['connectivities']
             self._adata.obsp[f'distances_{i}'] = d.obsp['distances']
             self._adata.uns[f'neighbors_{i}'] = d.uns['neighbors']
-
+        
     def sample_pcs(self, sid_name='sid'):
         D = self.avg_graph(make_umap=False)
         NAM, _ = cna.tl.nam(D, sid_name)
@@ -129,6 +129,16 @@ class Fingerprints:
         U, _, _ = np.linalg.svd(NAM, full_matrices=False)
         return pd.DataFrame(U, index=NAM.index,
                             columns=[f'PC{i+1}' for i in range(U.shape[1])])
+    
+    def mn_pcs(self, sid_name='sid'):
+        D = self.avg_graph(make_umap=False)
+        NAM, _ = cna.tl.nam(D, sid_name)
+        NAM -= NAM.mean(axis=0)
+        NAM /= NAM.std(axis=0)
+        _, _, VT = np.linalg.svd(NAM, full_matrices=False)
+        print(VT.shape)
+        return pd.DataFrame(VT.T, index=NAM.columns,
+                            columns=[f'PC{i+1}' for i in range(VT.shape[0])])
 
     def to_anndata(self):
         X = np.hstack([self._adata.obsm[f'X_{i}'] for i in range(self.nmodels)])

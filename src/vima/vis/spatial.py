@@ -164,7 +164,7 @@ def annotate_spatialplot(patchmeta, highlight, color, thickness=3, show=True, fi
             cnt = cnt.squeeze()
             if cnt.ndim == 1:
                 continue
-            ax.plot(cnt[:, 0], cnt[:, 1], color=color, linewidth=thickness)
+            ax.plot(np.append(cnt[:, 0], cnt[0, 0]), np.append(cnt[:, 1], cnt[0, 1]), color=color, linewidth=thickness)
 
     if show:
         plt.show()
