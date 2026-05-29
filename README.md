@@ -11,7 +11,7 @@ Note that `vima` requires `pytorch` and `harmonypy`. These should install automa
 ## demo
 To get started with an example analysis on a toy spatial transcriptomics dataset, take a look at our brief demo. You can see a [completed read-only version](https://github.com/yakirr/vima/blob/main/demo/demo_ST_minimal.ipynb) or run an [interactive version](https://colab.research.google.com/github/yakirr/tpae/blob/main/demo/demo_ST_minimal.ipynb) yourself on a Google Colab GPU (though this requires Colab Pro due to insufficient memory provided on the free tier.)
 
-To see how to apply `vima` to a stain-based modality like CODEX, immunohistochemistry, or immunofluorescence, look at our [immunofluorescence demo](https://github.com/yakirr/vima/blob/main/demo/demo_ST_minimal.ipynb).
+To see how to apply `vima` to a stain-based modality like CODEX, immunohistochemistry, or immunofluorescence, look at our [immunofluorescence demo](https://github.com/yakirr/vima/blob/main/demo/demo_IF.ipynb).
 
 ## citation
 If you use `vima`, please cite:
