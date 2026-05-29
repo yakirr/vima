@@ -6,9 +6,10 @@ Variational inference-based microniche analysis is a method for conducting case-
    ```
    pip install vima-spatial
    ```
+Note that `vima` requires `pytorch` and `harmonypy`. These should install automatically through `pip`, but if you have trouble, try installing them first, verifying that they work, and then installing `vima`.
 
 ## demo
-Take a look at our [demo](https://github.com/yakirr/vima/blob/main/demo/demo_IF.ipynb) to see how to get started with an example analysis. We plan to put up demos for other data modalities in the future.
+Take a look at our brief [demo](https://github.com/yakirr/vima/blob/main/demo/demo_ST_minimal.ipynb) to get started with an example analysis on a toy spatial transcriptomics dataset. To see how to apply `vima` to a stain-based modality like CODEX, immunohistochemistry, or immunofluorescence, try our [immunofluorescence demo](https://github.com/yakirr/vima/blob/main/demo/demo_ST_minimal.ipynb).
 
 ## citation
 If you use `vima`, please cite:
