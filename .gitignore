@@ -179,9 +179,7 @@ demo/data/IF/if-preprocessed.tar
 demo/ST_raw.tar.gz
 demo/data/IF.1.uploaddata.ipynb
 demo/data/ST/cells.tsv
-demo/data/ST/cells_modified.tsv
-demo/data/ST/cell_metadata.tsv
-demo/data/ST/raw/*.csv
+demo/data/ST/raw/*.parquet
 demo/data/IF/raw/*.qptiff
 demo/data/IF/10u/*
 demo/data/ST/10u/*

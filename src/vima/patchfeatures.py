@@ -282,6 +282,7 @@ def test_features(
             'mean_b':      mean_b,
             'log2fc':            np.log2((median_a_raw + 1e-9) / (median_b_raw + 1e-9)),
             'log2fc_means': np.log2((mean_a + 1e-9) / (mean_b + 1e-9)),
+            'diff_median':     median_a_raw - median_b_raw,
         }, index=features.columns)
     else:
         result = pd.DataFrame({
