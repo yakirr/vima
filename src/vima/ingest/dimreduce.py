@@ -50,7 +50,11 @@ def metapixels_allsamples(normedpixelsdir, masksdir, sids, total_n_metapixels, p
             print(f'\033[93mWARNING: {sid} has different markers ({len(markers)}) '
                   f'than {ref_sid} ({len(ref_markers)}): {detail}\033[0m')
         
-        all_metapixels[sid], all_npixels[sid] = metapixels(da.astype(np.float32), mask_da)
+        means = xr.DataArray(da.attrs['means'], dims='marker')
+        stds = xr.DataArray(da.attrs['stds'], dims='marker')
+        da = ((da - means) / stds).where(mask_da, 0)
+
+        all_metapixels[sid], all_npixels[sid] = metapixels(da, mask_da)
         da.close(); mask_da.close()
         del da, mask_da
         if len(all_metapixels[sid]) > nmp_per_sample:
@@ -133,6 +137,11 @@ def pca_pixels(normedpixelsdir, masksdir, pcloadings, sids):
     for sid in pb(sids):
         da = xr.open_dataarray(f'{normedpixelsdir}/{sid}.nc')
         mask_da = xr.open_dataarray(f'{masksdir}/{sid}.nc')
+        
+        means = xr.DataArray(da.attrs['means'], dims='marker')
+        stds = xr.DataArray(da.attrs['stds'], dims='marker')
+        da = ((da - means) / stds).where(mask_da, 0)
+
         # load raw arrays and close before dtype conversion so we never hold
         # two full (H × W × n_genes) copies simultaneously
         data = da.values

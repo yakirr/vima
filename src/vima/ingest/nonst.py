@@ -83,8 +83,8 @@ def prepare(load, filepaths, orig_pixel_size, markers, get_foreground, norm_by_b
 
         goodmarkers, pl = norm_by_background(pl)
         pl = np.log1p(med_ntranscripts * pl / (pl.sum(axis=1)[:,None] + 1e-6)) # adding to denominator in case pixel is all 0s
-        pl -= means
-        pl /= stds
         s = s.sel(marker=goodmarkers)
         util.set_pixels(s, mask, pl)
+        s.attrs['means'] = means.reindex(s.marker.values, fill_value=1).values.astype(np.float32)
+        s.attrs['stds'] = stds.reindex(s.marker.values, fill_value=0).values.astype(np.float32)
         util.write_xarray(s, f'{normeddir}/{sid}.nc')

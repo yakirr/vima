@@ -148,20 +148,19 @@ def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel
         plt.gca().set_aspect('equal'); plt.title('transcript density (gray = failed qc)'); plt.axis('off'); plt.show()
     print(f'\t{len(pl)} pixels after QC.')
 
-    print('\tLog-normalizing and centering...')
+    print('\tLog-normalizing...')
     pl[markers] = pl[markers].div(pl[markers].sum(axis=1), axis=0).fillna(0) * target_sum
     pl[markers] = np.log1p(pl[markers])
-    pl = pl.reindex(columns=['pixel_x', 'pixel_y'] + list(means.index), fill_value=0).copy() # add 0s for genes that didn't show up in this sample
-    pl[markers] = (pl - means)[markers]
-    pl[markers] = (pl / stds)[markers]
     
     print(f'\trestricting to {len(genes)} genes')
-    pl = pl.reindex(columns=['pixel_x', 'pixel_y'] + genes, fill_value=0)
+    pl = pl.reindex(columns=['pixel_x', 'pixel_y'] + genes, fill_value=0) # zeros for genes not present in this sample
     mask_pl = pl[['pixel_x', 'pixel_y']].copy()
     mask_pl['nonempty'] = 1
     
     print('\tMaking pixel matrix...', end='')
     s = util.pixellist_to_pixelmatrix(pl, genes).reindex({'x': all_x, 'y': all_y}, fill_value=0)
+    s.attrs['means'] = means.reindex(genes, fill_value=1).values.astype(np.float32)
+    s.attrs['stds'] = stds.reindex(genes, fill_value=0).values.astype(np.float32)
     mask = util.pixellist_to_pixelmatrix(mask_pl, ['nonempty']).squeeze().astype(bool).reindex({'x': all_x, 'y': all_y}, fill_value=False)
     s.name = sid; mask.name = sid
     gc.collect()
@@ -195,7 +194,7 @@ def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_t
         sid, data = load(filepath)
         print(f'Processing sample {i+1}/{len(filepaths)}: {sid}')
         mask, pm = transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel_size,
-                                                       normfactor, means, stds, genes=hvgs, plots=basic_plots,
+                                                       normfactor, means=means, stds=stds, genes=hvgs, plots=basic_plots,
                                                        min_ntranscripts_per_pixel=min_ntranscripts_per_pixel,
                                                        min_ngenes_per_pixel=min_ngenes_per_pixel)
         del data; gc.collect()
