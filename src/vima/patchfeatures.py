@@ -84,7 +84,7 @@ def expression_profiles(
     patch_x_col='x',
     patch_y_col='y',
     patch_size_in_pixels_col='patchsize',
-    per_nonempty_pixel=False,
+    per_nonempty_pixel=True,
 ):
     """Return per-patch mean marker expression profiles.
 
