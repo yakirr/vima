@@ -33,6 +33,7 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
     union_allgenes = set()
     means = []
     stds = []
+    npixels = []
 
     for i, filepath in enumerate(filepaths):
         print(f'\tProcessing sample {i+1}/{len(filepaths)}:', end=' ')
@@ -55,6 +56,7 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
         X = np.log1p(X)
         means.append(pd.Series(np.array(X.mean(axis=0, dtype=np.float64)).squeeze(), index=genes))
         stds.append(pd.Series(np.array(X.std(axis=0, dtype=np.float64)).squeeze(), index=genes))
+        npixels.append(pl.n_obs)
         union_allgenes.update(genes)
 
         # QC genes and compute HVGs for this sample
@@ -116,9 +118,17 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
 
         pl.X = None; del pl; del X; gc.collect()
 
-    means = pd.concat([m.reindex(index=union_allgenes) for m in means], axis=1)
-    stds = pd.concat([s.reindex(index=union_allgenes) for s in stds], axis=1)
-    return list(union_hvgs), means.mean(axis=1), stds.mean(axis=1)
+    means_df = pd.concat([m.reindex(index=union_allgenes, fill_value=0) for m in means], axis=1)
+    stds_df  = pd.concat([s.reindex(index=union_allgenes, fill_value=0) for s in stds],  axis=1)
+    w = np.array(npixels, dtype=np.float64)
+    W = w.sum()
+
+    grand_mean   = np.sum((means_df * w).values, axis=1, dtype=np.float64) / W
+    mean_of_vars = np.sum((stds_df ** 2 * w).values, axis=1, dtype=np.float64) / W
+    var_of_means = ((means_df.subtract(grand_mean, axis=0).values.astype(np.float64) ** 2) * w).sum(axis=1) / W
+    grand_std    = np.sqrt(mean_of_vars + var_of_means)
+
+    return list(union_hvgs), grand_mean, grand_std
 
 def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel_size, target_sum, means, stds,
                                   genes, min_ngenes_per_pixel, min_ntranscripts_per_pixel, plots=True):
@@ -159,8 +169,8 @@ def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel
     
     print('\tMaking pixel matrix...', end='')
     s = util.pixellist_to_pixelmatrix(pl, genes).reindex({'x': all_x, 'y': all_y}, fill_value=0)
-    s.attrs['means'] = means.reindex(genes, fill_value=1).values.astype(np.float32)
-    s.attrs['stds'] = stds.reindex(genes, fill_value=0).values.astype(np.float32)
+    s.attrs['means'] = means.reindex(genes, fill_value=0).values.astype(np.float32)
+    s.attrs['stds'] = stds.reindex(genes, fill_value=1).values.astype(np.float32)
     mask = util.pixellist_to_pixelmatrix(mask_pl, ['nonempty']).squeeze().astype(bool).reindex({'x': all_x, 'y': all_y}, fill_value=False)
     s.name = sid; mask.name = sid
     gc.collect()
