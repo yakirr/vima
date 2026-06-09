@@ -27,7 +27,8 @@ def med_ntranscripts(load, filepaths, x_col, y_col, pixel_size=10):
     return np.mean(np.array(medians))
 
 def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_genes_per_sample=200, genes_to_add=[],
-                 pixel_size=10, min_mean=0.01, min_ntranscripts=10, min_npixels=20, min_totalcounts=500, plot_mean_var=True,
+                 pixel_size=10, min_mean=0.01, min_ntranscripts_per_pixel=10, min_ngenes_per_pixel=1,
+                 min_npixels=20, min_totalcounts=500, plot_mean_var=True,
                  plot_spatial_hvgs=False):
     union_hvgs = set()
     union_allgenes = set()
@@ -49,7 +50,8 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
         obs = pl[['pixel_x', 'pixel_y']].copy()
         obs.index = obs.index.astype(str)
         pl = sc.AnnData(pl[genes].values.astype(np.float32), var=pd.DataFrame(index=genes), obs=obs)
-        sc.pp.filter_cells(pl, min_counts=min_ntranscripts, inplace=True)
+        sc.pp.filter_cells(pl, min_counts=min_ntranscripts_per_pixel, inplace=True)
+        sc.pp.filter_cells(pl, min_genes=min_ngenes_per_pixel, inplace=True)
         
         # compute moments
         X = pl.X / pl.X.sum(axis=1, keepdims=True) * target_sum
@@ -126,7 +128,8 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
     grand_mean   = np.sum((means_df * w).values, axis=1, dtype=np.float64) / W
     mean_of_vars = np.sum((stds_df ** 2 * w).values, axis=1, dtype=np.float64) / W
     var_of_means = ((means_df.subtract(grand_mean, axis=0).values.astype(np.float64) ** 2) * w).sum(axis=1) / W
-    grand_std    = np.sqrt(mean_of_vars + var_of_means)
+    grand_mean = pd.Series(grand_mean, index=means_df.index)
+    grand_std  = pd.Series(np.sqrt(mean_of_vars + var_of_means), index=means_df.index)
 
     return list(union_hvgs), grand_mean, grand_std
 
@@ -152,7 +155,7 @@ def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel
         plt.figure(figsize=(5,5))
         plt.scatter(pl.pixel_x, pl.pixel_y, c='gray', s=0.1, alpha=0.2)
     pl = pl[(pl[markers] != 0).sum(axis=1) >= min_ngenes_per_pixel]
-    pl = pl[(pl[markers].sum(axis=1) >= min_ntranscripts_per_pixel) & (pl[list(set(markers) & set(genes))].sum(axis=1) > 0)]
+    pl = pl[(pl[markers].sum(axis=1) >= min_ntranscripts_per_pixel) ]#& (pl[list(set(markers) & set(genes))].sum(axis=1) > 0)]
     if plots:
         plt.scatter(pl.pixel_x, pl.pixel_y, c=pl[markers].sum(axis=1), s=0.1, alpha=0.8, vmin=0, vmax=100)
         plt.gca().set_aspect('equal'); plt.title('transcript density (gray = failed qc)'); plt.axis('off'); plt.show()
@@ -169,8 +172,8 @@ def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel
     
     print('\tMaking pixel matrix...', end='')
     s = util.pixellist_to_pixelmatrix(pl, genes).reindex({'x': all_x, 'y': all_y}, fill_value=0)
-    s.attrs['means'] = means.reindex(genes, fill_value=0).values.astype(np.float32)
-    s.attrs['stds'] = stds.reindex(genes, fill_value=1).values.astype(np.float32)
+    s.attrs['means'] = means.reindex(s.marker.values).values.astype(np.float32)
+    s.attrs['stds'] = stds.reindex(s.marker.values).values.astype(np.float32)
     mask = util.pixellist_to_pixelmatrix(mask_pl, ['nonempty']).squeeze().astype(bool).reindex({'x': all_x, 'y': all_y}, fill_value=False)
     s.name = sid; mask.name = sid
     gc.collect()
@@ -192,7 +195,8 @@ def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_t
                                      n_top_genes_per_sample=n_top_genes_per_sample,
                                      genes_to_add=genes_to_add, pixel_size=pixel_size, plot_mean_var=basic_plots,
                                      plot_spatial_hvgs=plot_spatial_hvgs,
-                                     min_ntranscripts=min_ntranscripts_per_pixel)
+                                     min_ntranscripts_per_pixel=min_ntranscripts_per_pixel,
+                                     min_ngenes_per_pixel=min_ngenes_per_pixel)
     print('Final number of genes used =', len(hvgs))
 
     print('Rasterizing and normalizing...')
@@ -213,7 +217,7 @@ def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_t
 
 def prepare_xenium5k(load, filepaths, x_col, y_col, gene_col, n_top_genes_per_sample, outdir,
                      pixel_size=10, genes_to_add=[], basic_plots=True, plot_spatial_hvgs=False,
-                     min_ntranscripts_per_pixel=11, min_ngenes_per_pixel=5):
+                     min_ntranscripts_per_pixel=11, min_ngenes_per_pixel=1):
     rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col,
                                   n_top_genes_per_sample,
                                   pixel_size=pixel_size,
