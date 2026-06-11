@@ -4,6 +4,7 @@ import anndata as ad
 import scanpy as sc
 import scipy.sparse as sp
 import cna
+import copy
 from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 
@@ -59,6 +60,7 @@ class Fingerprints:
         d = ad.AnnData(X=self._adata.obsm[f'X_{i}'], obs=self._adata.obs.copy())
         d.obsp['connectivities'] = self._adata.obsp[f'connectivities_{i}']
         d.obsp['distances'] = self._adata.obsp[f'distances_{i}']
+        d.obsm = copy.deepcopy(self._adata.obsm)
         d.uns['neighbors'] = self._adata.uns[f'neighbors_{i}']
         return d
 
