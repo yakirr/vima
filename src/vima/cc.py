@@ -75,59 +75,124 @@ def latentreps(models, P, use_rep='X', n_comps=100, with_mse=True, **kwargs):
         fp.obs['mse'] = per_channel.mean(axis=1)
     return fp
 
-def omnibus_pvalue(obs, null, Nnull, mn_chunk=None):
-    """obs: (Nmodels, Nmns).  null: (Nnull, Nmodels, Nmns) ndarray or memmap.
-    Returns (P_value, n_nulls_ge_obs)."""
-    K, _, M = null.shape
+def gaussian_perpatchll_test(obs, null, nnull=None, *, do_significance=True, ridge=0.0, chunk=2000):
+    K, Nm, M = null.shape
+    LOG2PI = np.log(2 * np.pi)
+    eye = np.eye(Nm)
+    obs = obs.astype(np.float64)
  
-    # reduce models -> per-microniche (level, spread); vectorized, no null loop
-    a_n = null.mean(axis=1)
-    v_n = null.var(axis=1)
-    a_o = obs.mean(0).astype(np.float64)
-    v_o = obs.var(0).astype(np.float64)
+    LL_obs = np.empty(M)                                      # per-patch obs log-likelihood
+    LL_null = np.empty((K, M)) if do_significance else None   # per-patch null log-likelihoods
  
-    # sufficient statistics over nulls (accumulated in float64)
-    Sa  = a_n.sum(0, dtype=np.float64);            Sv  = v_n.sum(0, dtype=np.float64)
-    Saa = np.einsum('km,km->m', a_n, a_n, dtype=np.float64)
-    Svv = np.einsum('km,km->m', v_n, v_n, dtype=np.float64)
-    Sav = np.einsum('km,km->m', a_n, v_n, dtype=np.float64)
+    for s in range(0, M, chunk):
+        e = min(s + chunk, M)
+        nv = null[:, :, s:e].astype(np.float64)              # (K, Nm, b)
+        mu = nv.mean(0)
+        cen = nv - mu[None]
+        Sc = np.einsum('kip,kjp->pij', cen, cen)             # full-K scatter (shared)
  
-    def quad(dx, dy, caa, cvv, cav):
-        det = np.maximum(caa * cvv - cav * cav, 1e-300)
-        return (dx * dx * cvv - 2 * dx * dy * cav + dy * dy * caa) / det
+        # obs: scored against the first K-1 nulls -- drop the last null from the scatter
+        w = cen[-1]
+        Sc_obs = Sc - (K / (K - 1)) * np.einsum('ip,jp->pij', w, w)
+        Sig_obs = Sc_obs / (K - 2)
+        if ridge:
+            Sig_obs = Sig_obs + ridge * eye
+        Po = np.linalg.inv(Sig_obs)
+        _, ldo = np.linalg.slogdet(Sig_obs)
+        muo = (K * mu - nv[-1]) / (K - 1)
+        do = obs[:, s:e] - muo
+        maha_o = np.einsum('ip,pij,jp->p', do, Po, do)
+        LL_obs[s:e] = -0.5 * (maha_o + Nm * LOG2PI + ldo)
  
-    # obs scored against the full-null (K-sample) moments
-    ma, mv = Sa / K, Sv / K
-    caa = (Saa - K * ma * ma) / (K - 1)
-    cvv = (Svv - K * mv * mv) / (K - 1)
-    cav = (Sav - K * ma * mv) / (K - 1)
-    D_obs = float(quad(a_o - ma, v_o - mv, caa, cvv, cav).sum())
+        if do_significance:
+            # nulls: leave-one-out via rank-1 downdate of the full-K covariance
+            Sig = Sc / (K - 1)
+            if ridge:
+                Sig = Sig + ridge * eye
+            P = np.linalg.inv(Sig)
+            _, ld = np.linalg.slogdet(Sig)
+            t = np.einsum('kip,pij->kjp', cen, P)
+            q = np.einsum('kjp,kjp->kp', t, cen)             # (K, b)
+            cg = np.minimum(K * q / (K - 1) ** 2, 1 - 1e-9)
+            maha_loo = (K / (K - 1)) ** 2 * (K - 2) * (q / (K - 1)) / (1 - cg)
+            ld_loo = ld[None] + Nm * np.log((K - 1) / (K - 2)) + np.log(np.maximum(1 - cg, 1e-300))
+            LL_null[:, s:e] = -0.5 * (maha_loo + Nm * LOG2PI + ld_loo)
  
-    # all nulls at once via closed-form leave-one-out; chunk only to cap memory
-    n = K - 1
-    D_null = np.zeros(K)
-    if mn_chunk is None:
-        mn_chunk = max(1, min(M, int(2e7 // max(K, 1))))
-    for s in range(0, M, mn_chunk):
-        sl = slice(s, s + mn_chunk)
-        a = a_n[:, sl].astype(np.float64)            # (K, b)
-        v = v_n[:, sl].astype(np.float64)
-        Sa_b, Sv_b = Sa[sl], Sv[sl]
-        Saa_b, Svv_b, Sav_b = Saa[sl], Svv[sl], Sav[sl]
-        ma = (Sa_b - a) / n
-        mv = (Sv_b - v) / n
-        dx = a - ma                                  # = (K*a - Sa_b)/n
-        dy = v - mv
-        caa = ((Saa_b - a * a) - n * ma * ma) / (n - 1)
-        cvv = ((Svv_b - v * v) - n * mv * mv) / (n - 1)
-        cav = ((Sav_b - a * v) - n * ma * mv) / (n - 1)
-        D_null += quad(dx, dy, caa, cvv, cav).sum(axis=1)
+    if not do_significance:
+        return LL_obs
  
-    ge = int(np.sum(D_null >= D_obs))
-    return (1 + ge) / (1 + K), D_obs, D_null
+    LL_obs_total = LL_obs.sum()
+    LL_null_total = LL_null.sum(1)                            # (K,)
+    global_p = (1 + np.sum(LL_null_total <= LL_obs_total)) / (1 + K)   # lower tail = signal
+    return float(global_p), LL_obs, LL_null
 
-def _association(MAMresid, M, y, batches, donorids, Nnull=1000,
-                 max_num_mns=10_000, show_progress=False):
+def _stats(R, Y):
+    # R: (n, Nmodels, b)   Y: (n, K)  ->  (K, Nmodels, b) of mean_n(Y * R)
+    return np.tensordot(Y, R, axes=([0], [0])) / R.shape[0]
+ 
+def screen_all_patches(MAMresid, ycond, ycond_null, patch_chunk=10000):
+    """PASS 1: per-patch observed log-likelihoods for ALL patches (do_significance=False).
+       ycond_null is (n, Nnull_screen), e.g. Nnull_screen = 500-1000."""
+    n, Nm, Npatches = MAMresid.shape
+    corrs = np.empty((Nm, Npatches))
+    LL_obs = np.empty(Npatches)
+    for s in tqdm(range(0, Npatches, patch_chunk), desc='computing LLs for all patches'):
+        e = min(s + patch_chunk, Npatches)
+        R = np.asarray(MAMresid[:, :, s:e], dtype=np.float64)          # (n, Nm, b)
+        obs_c  = (ycond[:, None, None] * R).mean(0)                    # (Nm, b)
+        null_c = _stats(R, ycond_null)                                # (Nnull_screen, Nm, b)
+        LL_obs[s:e] = gaussian_perpatchll_test(obs_c, null_c, do_significance=False)
+        corrs[:,s:e] = obs_c
+        del R, null_c
+    return LL_obs, corrs
+ 
+ 
+def significance_on_subset(MAMresid, ycond, ycond_null_big, n_patches=5000,
+                           rng=None, sub_chunk=1000):
+    """PASS 2: random patch subset + a large null set (ycond_null_big is (n, Nnull_big),
+       e.g. Nnull_big = 10000). Patches are processed in sub-chunks so the big
+       (Nnull_big, Nm, sub_chunk) correlation tensor is bounded; the per-null totals
+       are accumulated to form the global p-value."""
+    n, Nm, Npatches = MAMresid.shape
+    Kbig = ycond_null_big.shape[1]
+    rng = np.random.default_rng() if rng is None else rng
+    if n_patches > Npatches:
+        print(f'WARNING: cannot subsample to {n_patches} patches because there are only {Npatches} patches.')
+        sel = np.arange(Npatches)
+    else:
+        sel = np.sort(rng.choice(Npatches, size=n_patches, replace=False))
+ 
+    LL_obs = np.empty(n_patches)
+    LL_null = np.empty((Kbig, n_patches))
+    for a in tqdm(range(0, n_patches, sub_chunk), desc='calibrating LL statistics'):
+        b = min(a + sub_chunk, n_patches)
+        R = np.asarray(MAMresid[:, :, sel[a:b]], dtype=np.float64)     # (n, Nm, sb)
+        obs_c  = (ycond[:, None, None] * R).mean(0)                    # (Nm, sb)
+        null_c = _stats(R, ycond_null_big)                            # (Nnull_big, Nm, sb)
+        _, llo, lln = gaussian_perpatchll_test(obs_c, null_c, do_significance=True)
+        LL_obs[a:b] = llo
+        LL_null[:, a:b] = lln
+        del R, null_c
+ 
+    obs_total = LL_obs.sum()
+    null_total = LL_null.sum(1)                                        # (Nnull_big,)
+    global_p = (1 + np.sum(null_total <= obs_total)) / (1 + Kbig)      # lower tail = signal
+    return sel, float(global_p), LL_obs, LL_null
+ 
+ 
+def empirical_fdr(LL_obs, LL_null, thresholds):
+    """Lower-tail detection (LL <= threshold). LL_null is (Nnull, n_patches_subset),
+       a random subset that estimates the genome-wide null-LL distribution.
+       FDR(t) = (expected null fraction below t) * Npatches_obs / (#obs below t)."""
+    thr = np.asarray(thresholds, float)
+    null_frac = (LL_null[:, :, None] <= thr[None, None, :]).mean(axis=(0, 1))   # (T,)
+    R = (LL_obs[:, None] <= thr[None, :]).sum(0)                                # (T,)
+    fdr = np.where(R > 0, null_frac * LL_obs.size / np.maximum(R, 1), 0.0)
+    return np.minimum.accumulate(fdr[::-1])[::-1]                               # monotone
+ 
+
+def _association(MAMresid, M, y, batches, donorids, rng, Nnullscreen=500, Nnullfull=10000,
+                 max_num_mns=5_000, show_progress=False):
     # prep data
     y = (y - y.mean())/y.std()
     n = len(y)
@@ -136,144 +201,47 @@ def _association(MAMresid, M, y, batches, donorids, Nnull=1000,
 
     # make null phenotypes
     if donorids is not None:
-        y_ = cna.tl._stats.grouplevel_permutation(donorids, y, Nnull)
+        yscreen = cna.tl._stats.grouplevel_permutation(donorids, y, Nnullscreen)
+        ybig = cna.tl._stats.grouplevel_permutation(donorids, y, Nnullfull)
     else:
-        y_ = cna.tl._stats.conditional_permutation(batches, y, Nnull)
-    ycond_ = M.dot(y_)
-    ycond_ /= ycond_.std(axis=0)
+        yscreen = cna.tl._stats.conditional_permutation(batches, y, Nnullscreen)
+        ybig = cna.tl._stats.conditional_permutation(batches, y, Nnullfull)
+    ycond_screen = M.dot(yscreen); ycond_screen /= ycond_screen.std(axis=0)
+    ycond_big = M.dot(ybig); ycond_big /= ycond_big.std(axis=0)
 
     # MAMresid: (n, Nmodels, Npatches)
     # get microniche coefficients and weights
-    mncorrs = (ycond[:,None,None]*MAMresid).mean(axis=0)  # (Nmodels, Npatches)
-    weights = (mncorrs**2) / (mncorrs**2).sum(axis=0)
-
-    # nullmncorrs: (Nnull, Nmodels, Npatches) — subsample patches if needed
-    Nmns = MAMresid.shape[2]
-    if Nmns > max_num_mns:
-        patch_ix = np.random.choice(Nmns, max_num_mns, replace=False)
-        MAMresid_downsampled = MAMresid[:, :, patch_ix]
-    else:
-        patch_ix = np.ones(Nmns).astype(bool)
-        MAMresid_downsampled = MAMresid
-    nullmncorrs = np.einsum('nmp,nl->lmp',
-                            MAMresid_downsampled.astype(np.float32),
-                            ycond_.astype(np.float32)) / n
-
-    # computed meta-analyzed mn coefficients and global test statistics
-    mncorrs_meta = (mncorrs**3).sum(axis=0)/(mncorrs**2).sum(axis=0)
-
-    # compute global p-value
-    p, globalstat, nullglobalstats = omnibus_pvalue(mncorrs[:,patch_ix], nullmncorrs, Nnull)
+    LL_all, mncorrs = screen_all_patches(MAMresid, ycond, ycond_screen, patch_chunk=10000)
+    sel, p, LLo, LLn = significance_on_subset(MAMresid, ycond, ycond_big, n_patches=max_num_mns, rng=rng)
     print(f'\033[32mP = {p}\033[0m')
-    if p <= 1/(Nnull + 1)+1e-10:
+    if p <= 1/(Nnullfull + 1)+1e-10:
         warnings.warn('global association p-value attained minimal possible value. '+\
                 'Consider increasing Nnull')
-    
-    # thresholds must be derived from the same (subsampled) patches passed to
-    # empirical_fdrs, else the highest thresholds have zero real detections (div by zero)
-    mncorrs_meta_downsampled = mncorrs_meta[patch_ix]
-    maxcorr = max(np.abs(mncorrs_meta_downsampled).max(), 0.001)
-    fdr_thresholds = np.arange(maxcorr/4, maxcorr, maxcorr/400)
-    nullmncorrs_meta = ((nullmncorrs**3).sum(axis=1)/(nullmncorrs**2).sum(axis=1)).T
+        
+    thr = np.quantile(LLo, np.arange(0.01, 1, 0.01))
+    fdrs = empirical_fdr(LLo, LLn, thr)
 
-    fdr_vals = cna.tl._stats.empirical_fdrs(mncorrs_meta_downsampled, nullmncorrs_meta, fdr_thresholds)
+    weights = (mncorrs**2) / (mncorrs**2).sum(axis=0)
+    mncorrs_meta = mncorrs.mean(axis=0)
+
     fdrs = pd.DataFrame({
-        'threshold':fdr_thresholds,
-        'fdr':fdr_vals})
+        'll_threshold':thr,
+        'fdr':fdrs})
 
-    res = {'p':p, 'mncorrs':mncorrs_meta, 'fdrs':fdrs,
-            'globalstat':globalstat, 'nullglobalstats':nullglobalstats,
+    res = {'p':p, 'mncorrs':mncorrs_meta, 'LLs':LL_all, 'fdrs':fdrs,
+            'globalstat':LLo.sum(), 'nullglobalstats':LLn.sum(axis=1),
             'weights':weights,
-            'nullmncorrs':nullmncorrs_meta,
+            'permodel_mncorrs':mncorrs,
             }
-    return Namespace(**res), mncorrs, nullmncorrs, patch_ix
+    return Namespace(**res), mncorrs, None, None
 
-
-# def _association(MAMresid, M, y, batches, donorids, patches_to_samples, ks=None, Nnull=1000,
-#                  max_num_mns=10_000, show_progress=False):
-#     # prep data
-#     y = (y - y.mean())/y.std()
-#     n = len(y)
-#     ycond = M.dot(y)
-#     ycond /= ycond.std(axis=0)
-
-#     # make null phenotypes
-#     if donorids is not None:
-#         y_ = cna.tl._stats.grouplevel_permutation(donorids, y, Nnull)
-#     else:
-#         y_ = cna.tl._stats.conditional_permutation(batches, y, Nnull)
-#     ycond_ = M.dot(y_)
-#     ycond_ /= ycond_.std(axis=0)
-
-#     # MAMresid: (n, Nmodels, Npatches)
-#     # (1) per-model microniche correlations, (2) Fisher-transformed elementwise
-#     mncorrs = (ycond[:,None,None]*MAMresid).mean(axis=0)  # (Nmodels, Npatches)
-#     mncorrs = np.arctanh(mncorrs)
-#     weights = (mncorrs**2) / (mncorrs**2).sum(axis=0)
-
-#     # (3) meta-analyzed correlation per patch = average over models
-#     mncorrs_meta = mncorrs.mean(axis=0)  # (Npatches,)
-
-#     # (4) nullmncorrs: (Nnull, Nmodels, Npatches) — subsample patches if needed,
-#     #     Fisher-transform elementwise
-#     Nmns = MAMresid.shape[2]
-#     if Nmns > max_num_mns:
-#         patch_ix = np.random.choice(Nmns, max_num_mns, replace=False)
-#         MAMresid_downsampled = MAMresid[:, :, patch_ix]
-#     else:
-#         patch_ix = np.ones(Nmns).astype(bool)
-#         MAMresid_downsampled = MAMresid
-#     nullmncorrs = np.einsum('nmp,nl->lmp',
-#                             MAMresid_downsampled.astype(np.float32),
-#                             ycond_.astype(np.float32)) / n  # (Nsim, Nmodels, Npatches_ds)
-#     nullmncorrs = np.arctanh(nullmncorrs)
-
-#     # (5) null meta-analyzed correlation per (patch, simulate) = average over models
-#     nullmncorrs_meta = nullmncorrs.mean(axis=1).T  # (Npatches_ds, Nsim)
-
-#     # (6) per-patch std of the null meta-analyzed correlation across simulates
-#     sds = nullmncorrs_meta.std(axis=1)  # (Npatches_ds,)
-#     globalweights = 1 / sds
-
-#     # (7) global statistic = inverse-variance-weighted sum of meta correlations
-#     #     (over the same subsampled patches the null is defined on)
-#     mncorrs_meta_downsampled = mncorrs_meta[patch_ix]  # (Npatches_ds,)
-#     globalstat = ((mncorrs_meta_downsampled * globalweights)**2).sum()
-
-#     # (8) null global statistics, one per simulate
-#     nullglobalstats = ((nullmncorrs_meta * globalweights[:, None])**2).sum(axis=0)  # (Nsim,)
-
-#     # (9) empirical global p-value
-#     p = ((nullglobalstats >= globalstat).sum() + 1)/(len(nullglobalstats) + 1)
-#     print(f'\033[32mP = {p}\033[0m')
-#     if p <= 1/(Nnull + 1)+1e-10:
-#         warnings.warn('global association p-value attained minimal possible value. '+\
-#                 'Consider increasing Nnull')
-
-#     # (10) per-patch FDRs. thresholds must be derived from the same (subsampled)
-#     #      patches passed to empirical_fdrs, else the highest thresholds have zero
-#     #      real detections (div by zero)
-#     maxcorr = max(np.abs(mncorrs_meta_downsampled).max(), 0.001)
-#     fdr_thresholds = np.arange(maxcorr/4, maxcorr, maxcorr/400)
-#     fdr_vals = cna.tl._stats.empirical_fdrs(mncorrs_meta_downsampled, nullmncorrs_meta, fdr_thresholds)
-#     fdrs = pd.DataFrame({
-#         'threshold':fdr_thresholds,
-#         'fdr':fdr_vals,
-#         'num_detected': [(np.abs(mncorrs_meta)>t).sum() for t in fdr_thresholds]})
-
-#     res = {'p':p, 'mncorrs':mncorrs_meta, 'fdrs':fdrs,
-#             'globalstat':globalstat, 'nullglobalstats':nullglobalstats,
-#             'weights':weights,
-#             'nullmncorrs':nullmncorrs_meta,
-#             }
-#     return Namespace(**res)
 
 def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_added='mncoef',
                 return_full=False, ridges=None, cached_res=None,
                 Nnull=10000, seed=0, make_umap=True,
                 nsteps=None, show_progress=False, allow_low_sample_size=False,
-                max_num_mns=200000, **kwargs):
-    if seed is not None: np.random.seed(seed)
+                max_num_mns=5000, **kwargs):
+    rng = np.random.default_rng(seed)
 
     # Check formats of inputs and figure out which samples have valid data
     batches, filter_samples = cna.tl._association.check_inputs(ds.select_model(0), y, sid_name, batches, covs, donorids, allow_low_sample_size)
@@ -317,8 +285,9 @@ def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_add
         MAMresid, res.M.values,
         y[filter_samples].values, batches[filter_samples].values,
         donorids[filter_samples].values if donorids is not None else None,
+        rng,
         max_num_mns=max_num_mns,
-        show_progress=show_progress, Nnull=Nnull,
+        show_progress=show_progress, Nnullfull=Nnull,
         **kwargs)
     res.__dict__.update(vars(res_)) # add info from from res_ to res
     res.kept = kept
@@ -327,13 +296,17 @@ def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_add
     D = ds.weighted_avg_graph(res.weights, kept, make_umap=make_umap)
     if key_added in D.obs:
         warnings.warn(f"Key '{key_added}' already exists in d.obs. Overwriting.")
+    D.obs['LL'] = res.LLs
     D.obs[key_added] = res.mncorrs
+    D.obsm['permodel_mncorrs'] = pd.DataFrame(res.permodel_mncorrs.T,
+                                              columns=[f'model{i}' for i in range(1, ds.nmodels+1)],
+                                              index=D.obs.index)
     
     # compute local FDRs
-    def min_fdr_for_corr(ncorr):
-        matching_fdrs = res.fdrs.loc[res.fdrs.threshold <= abs(ncorr)].fdr
+    def min_fdr_for_corr(ll):
+        matching_fdrs = res.fdrs.loc[res.fdrs.ll_threshold >= ll].fdr
         return matching_fdrs.min() if not matching_fdrs.empty else 1
-    D.obs[f'{key_added}_fdr'] = D.obs[key_added].apply(min_fdr_for_corr)
+    D.obs[f'{key_added}_fdr'] = D.obs.LL.apply(min_fdr_for_corr)
     D.uns['vima_p'] = res.p
     D.uns['vima_pheno'] = y.name
 
