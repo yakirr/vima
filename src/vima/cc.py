@@ -230,52 +230,69 @@ def _association(MAMresid, M, y, batches, donorids, rng, Nnullscreen=500, Nnullf
 
     res = {'p':p, 'mncorrs':mncorrs_meta, 'LLs':LL_all, 'fdrs':fdrs,
             'globalstat':LLo.sum(), 'nullglobalstats':LLn.sum(axis=1),
+            'nullpermnLLs':LLn,
             'weights':weights,
             'permodel_mncorrs':mncorrs,
+            'MAMres':MAMresid,
+            'ycond':ycond
             }
     return Namespace(**res), mncorrs, None, None
 
 
+def compute_mams(ds, sid_name, nsteps=None, self_weight=1, show_progress=False):
+    """Compute the per-model MAT (list of raw NAM DataFrames) once so it can be reused across
+    phenotypes via association(..., MAMs=...). This performs only the (expensive) diffusion;
+    batch QC and sample/covariate filtering are applied later inside association(), so no batch
+    information is needed here and a single precomputed MAT can be reused across different
+    batch/covariate/phenotype specifications."""
+    print('computing MAT') #TODO: rename MAM to MAT in code if we keep this nomenclature
+    MAMs = []
+    for d in tqdm(ds.modelspecific_fingerprints(), total=ds.nmodels, ncols=100):
+        NAM = cna.tl._nam._nam(d, sid_name, nsteps=nsteps, self_weight=self_weight,
+                               show_progress=show_progress)
+        MAMs.append(NAM)
+    return MAMs
+
 def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_added='mncoef',
-                return_full=False, ridges=None, cached_res=None,
+                return_full=False, ridges=None, MAMs=None,
                 Nnull=10000, seed=0, make_umap=True,
                 nsteps=None, show_progress=False, allow_low_sample_size=False,
                 max_num_mns=5000, **kwargs):
     rng = np.random.default_rng(seed)
+    np.random.seed(seed)
 
     # Check formats of inputs and figure out which samples have valid data
     batches, filter_samples = cna.tl._association.check_inputs(ds.select_model(0), y, sid_name, batches, covs, donorids, allow_low_sample_size)
 
-    # Compute NAMs and filter to the appopriate samples and columns
-    if cached_res is None:
-        print('computing MAT') #TODO: rename MAM to MAT in code if we keep this nomenclature
-        MAMs = []
-        kepts = []
-        for d in tqdm(ds.modelspecific_fingerprints(), total=ds.nmodels, ncols=100):
-            MAM, kept, batches, covs, donorids, filter_samples = cna.tl._association.compute_nam_and_reindex(
-                d, y, sid_name, batches, covs, donorids, filter_samples, nsteps, show_progress, **kwargs)
-            MAMs.append(MAM)
-            kepts.append(kept)
-        kept = np.logical_and.reduce(kepts)
-        
-        for i in range(len(MAMs)):
-            MAMs[i] = MAMs[i][ds.obs.index[kept]]
+    # Compute raw NAMs (unless precomputed), then apply batch QC and sample/column filtering
+    if MAMs is None:
+        MAMs = compute_mams(ds, sid_name, nsteps=nsteps, show_progress=show_progress)
+    elif len(MAMs) != ds.nmodels:
+        raise ValueError(f'Expected MAMs of length {ds.nmodels}, got {len(MAMs)}.')
 
-        # residualize NAMs
-        MAMs_concat = pd.concat(MAMs, axis=1)
-        MAMs_concat.columns = range(MAMs_concat.shape[1])
-        res = cna.tl._nam._resid_nam(MAMs_concat,
-                            covs[filter_samples] if covs is not None else covs,
-                            batches[filter_samples] if batches is not None else batches,
-                            npcs=1,
-                            ridges=ridges,
-                            show_progress=show_progress)
-        MAMs_concat = res.namresid
-    else:
-        import copy
-        res = copy.deepcopy(cached_res)
-        MAMs_concat = res.namresid
-        kept = res.kept
+    MAMs_filtered = []
+    kepts = []
+    for NAM in MAMs:
+        NAMqc, keep = cna.tl._nam._qc_nam(NAM, batches, show_progress=show_progress)
+        NAM, kept, batches, covs, donorids, filter_samples = cna.tl._association.reindex_and_filter_nam(
+            NAMqc, keep, y, batches, covs, donorids, filter_samples)
+        MAMs_filtered.append(NAM)
+        kepts.append(kept)
+    kept = np.logical_and.reduce(kepts)
+
+    for i in range(len(MAMs_filtered)):
+        MAMs_filtered[i] = MAMs_filtered[i][ds.obs.index[kept]]
+
+    # residualize NAMs
+    MAMs_concat = pd.concat(MAMs_filtered, axis=1)
+    MAMs_concat.columns = range(MAMs_concat.shape[1])
+    res = cna.tl._nam._resid_nam(MAMs_concat,
+                        covs[filter_samples] if covs is not None else covs,
+                        batches[filter_samples] if batches is not None else batches,
+                        npcs=1,
+                        ridges=ridges,
+                        show_progress=show_progress)
+    MAMs_concat = res.namresid
 
     print('performing association test')
     n_samples, n_total = MAMs_concat.shape
