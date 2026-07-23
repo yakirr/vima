@@ -166,10 +166,12 @@ def _association(MAMresid, M, y, batches, donorids, rng, Nnull=10_000,
     MAMresid_sub32 = MAMresid_sub.astype(np.float32)
     S2 = np.zeros((ycond_.shape[1], MAMresid_sub.shape[2]), dtype=np.float32)  # (Nnull, max_num_mns)
     S3 = np.zeros_like(S2); S4 = np.zeros_like(S2)
-    for m in range(MAMresid_sub.shape[1]):
-        nm = (ycond_T @ MAMresid_sub32[:, m, :]) / n            # null mn coeffs for model m: (Nnull, npatch)
+    MAMresid_sub32_permodel = [np.ascontiguousarray(MAMresid_sub32[:, m, :]) for m in range(MAMresid_sub32.shape[1])]
+    for myMAM in MAMresid_sub32_permodel:
+        nm = (ycond_T @ myMAM) / n            # null mn coeffs for model m: (Nnull, npatch)
         nm2 = nm * nm
         S2 += nm2; S3 += nm2 * nm; S4 += nm2 * nm2
+    
     nullglobalstats = (S4 / S2).mean(axis=1)
     nullmncorrs_meta = (S3 / S2).T
 
