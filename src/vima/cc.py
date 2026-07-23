@@ -128,7 +128,7 @@ def _power_ratio(x, power, axis):
 
 
 def _association(MAMresid, M, y, batches, donorids, rng, Nnull=10_000,
-                 max_num_mns=1_000, show_progress=False):
+                 max_num_mns=5_000, show_progress=False):
     # prep data
     y = (y - y.mean())/y.std()
     n = len(y)
