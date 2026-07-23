@@ -105,6 +105,7 @@ class Fingerprints:
                        'n_neighbors': 15, 'use_rep': 'X', 'n_pcs': None},
         }
         if make_umap:
+            print('Computing UMAP...')
             sc.tl.umap(D, neighbors_key='neighbors')
         return D
 
