@@ -1,3 +1,5 @@
+import os
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import scanpy as sc
 import anndata as ad
@@ -76,26 +78,48 @@ def latentreps(models, P, use_rep='X', n_comps=100, with_mse=True, **kwargs):
     return fp 
 
 
-def tail_counts(z, znull):
-    if znull.ndim == 1:
-        znull = znull[:, None]
+def _tail_counts_total(znull, t2_sorted, nthreads):
+    """Total count of znull**2 entries >= each (sorted) squared threshold.
 
-    z2 = np.square(z)
-    zn2 = np.sort(np.square(znull), axis=0)
+    Counts over all null columns at once: the mean of the per-column tail
+    counts equals the total tail count / ncols, so there is no need to sort
+    the matrix per column or loop over columns. searchsorted releases the GIL,
+    so the scan is split across threads for a several-fold speedup.
+    """
+    col_chunks = np.array_split(np.arange(znull.shape[1]), nthreads)
 
-    return np.array([
-        zn2.shape[0] - np.searchsorted(zn2[:, j], z2, side="left")
-        for j in range(zn2.shape[1])
-    ])
+    def chunk_hist(cols):
+        sub = np.square(znull[:, cols]).ravel()
+        # number of thresholds each entry exceeds, in [0, len(t2_sorted)]
+        m = np.searchsorted(t2_sorted, sub, side="right")
+        return np.bincount(m, minlength=t2_sorted.size + 1)
+
+    with ThreadPoolExecutor(nthreads) as ex:
+        hist = np.sum(list(ex.map(chunk_hist, col_chunks)), axis=0)
+
+    # counts_sorted[i] = # entries exceeding at least (i+1) thresholds
+    return np.cumsum(hist[::-1])[::-1][1:]
+
 
 def empirical_fdrs(z, znull, thresholds):
     if znull.shape[0] != len(z):
         raise ValueError("shape mismatch")
 
-    tails = tail_counts(thresholds, znull)
-    ranks = len(z) - np.searchsorted(np.sort(z**2), thresholds**2, side="left")
+    if znull.ndim == 1:
+        znull = znull[:, None]
+    ncols = znull.shape[1]
 
-    return (tails / ranks).mean(axis=0)
+    t2 = np.square(np.asarray(thresholds, dtype=float))
+    order = np.argsort(t2)
+
+    nthreads = min(ncols, (os.cpu_count() or 1))
+    counts_sorted = _tail_counts_total(znull, t2[order], nthreads)
+    mean_tails = np.empty(t2.shape)
+    mean_tails[order] = counts_sorted / ncols
+
+    ranks = len(z) - np.searchsorted(np.sort(np.square(z)), t2, side="left")
+
+    return mean_tails / ranks
 
 
 def _power_ratio(x, power, axis):
@@ -138,11 +162,12 @@ def _association(MAMresid, M, y, batches, donorids, rng, Nnull=10_000,
     # We loop over the (few) models and accumulate the per-model power sums Sq = sum_m nm_m**q
     # incrementally, so we never materialize the full (Nnull, Nmodels, max_num_mns) array.
     globalstat = _power_ratio(mncorrs_sub, 4, axis=0).mean()
-    ycond_T = np.ascontiguousarray(ycond_.T)                    # (Nnull, n)
-    S2 = np.zeros((ycond_.shape[1], MAMresid_sub.shape[2]))     # (Nnull, max_num_mns)
+    ycond_T = np.ascontiguousarray(ycond_.T, dtype=np.float32)      # (Nnull, n)
+    MAMresid_sub32 = MAMresid_sub.astype(np.float32)
+    S2 = np.zeros((ycond_.shape[1], MAMresid_sub.shape[2]), dtype=np.float32)  # (Nnull, max_num_mns)
     S3 = np.zeros_like(S2); S4 = np.zeros_like(S2)
     for m in range(MAMresid_sub.shape[1]):
-        nm = (ycond_T @ MAMresid_sub[:, m, :]) / n              # null mn coeffs for model m: (Nnull, npatch)
+        nm = (ycond_T @ MAMresid_sub32[:, m, :]) / n            # null mn coeffs for model m: (Nnull, npatch)
         nm2 = nm * nm
         S2 += nm2; S3 += nm2 * nm; S4 += nm2 * nm2
     nullglobalstats = (S4 / S2).mean(axis=1)
