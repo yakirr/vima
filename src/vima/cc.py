@@ -134,11 +134,19 @@ def _association(MAMresid, M, y, batches, donorids, rng, Nnull=10_000,
     mncorrs_sub = mncorrs[:, sub]
     mncorrs_meta_sub = mncorrs_meta[sub]
 
-    # meta-analyzed mn coefficients and global test statistics (on the subsampled patches)
-    nullmncorrs = np.einsum('nk,nmp->kmp', ycond_, MAMresid_sub) / n
+    # meta-analyzed mn coefficients and global test statistics (on the subsampled patches).
+    # We loop over the (few) models and accumulate the per-model power sums Sq = sum_m nm_m**q
+    # incrementally, so we never materialize the full (Nnull, Nmodels, max_num_mns) array.
     globalstat = _power_ratio(mncorrs_sub, 4, axis=0).mean()
-    nullglobalstats = _power_ratio(nullmncorrs, 4, axis=1).mean(axis=1)
-    nullmncorrs_meta = _power_ratio(nullmncorrs, 3, axis=1).T
+    ycond_T = np.ascontiguousarray(ycond_.T)                    # (Nnull, n)
+    S2 = np.zeros((ycond_.shape[1], MAMresid_sub.shape[2]))     # (Nnull, max_num_mns)
+    S3 = np.zeros_like(S2); S4 = np.zeros_like(S2)
+    for m in range(MAMresid_sub.shape[1]):
+        nm = (ycond_T @ MAMresid_sub[:, m, :]) / n              # null mn coeffs for model m: (Nnull, npatch)
+        nm2 = nm * nm
+        S2 += nm2; S3 += nm2 * nm; S4 += nm2 * nm2
+    nullglobalstats = (S4 / S2).mean(axis=1)
+    nullmncorrs_meta = (S3 / S2).T
 
     # compute global p-vaule
     p = ((nullglobalstats >= globalstat).sum() + 1)/(len(nullglobalstats) + 1)
