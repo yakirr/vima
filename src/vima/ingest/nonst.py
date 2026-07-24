@@ -4,8 +4,7 @@ import cv2 as cv2
 import xarray as xr
 from . import util
 from skimage.filters import threshold_otsu
-from tqdm import tqdm
-pb = lambda x: tqdm(x, ncols=100)
+from .._settings import settings, logger
 
 def foreground_mask_codex(s, real_markers, blur_width=5):
     """
@@ -75,7 +74,7 @@ def foreground_mask_if(s, real_markers, neg_ctrls, not_imaged_thresh, artifact_t
                 coords={'x': s.x, 'y': s.y},
                 dims=['y','x'], name=s.name)
 
-def prepare(load, filepaths, orig_pixel_size, markers, get_foreground, norm_by_background, outdir, pixel_size=10, plot=True):
+def prepare(load, filepaths, orig_pixel_size, markers, get_foreground, norm_by_background, outdir, pixel_size=10):
     """
     Rasterize and normalize non-transcriptomics image data into pixel matrices.
 
@@ -111,12 +110,12 @@ def prepare(load, filepaths, orig_pixel_size, markers, get_foreground, norm_by_b
     os.makedirs(normeddir, exist_ok=True)
     
     if len(filepaths) == 0:
-        print('No files found. Check your filepaths and try again.')
+        logger.warning('No files found. Check your filepaths and try again.')
         return
 
-    print('Downsampling...')
+    logger.info('Downsampling...')
     downsample_factor = int(pixel_size//orig_pixel_size)
-    for filepath in pb(filepaths):
+    for filepath in settings.progress(filepaths):
         sid, sample = load(filepath) # assumes sample is a numpy array of shape (y,x,markers)
         sample = util.hiresarray_to_downsampledxarray(sample,
                                                         sid,
@@ -125,7 +124,7 @@ def prepare(load, filepaths, orig_pixel_size, markers, get_foreground, norm_by_b
         util.write_xarray(sample, f'{pixelsdir}/{sid}.nc')
         util.write_xarray(mask, f'{masksdir}/{sid}.nc')
 
-    print('Computing normalization factor and dataset-wide mean and variance per marker...')
+    logger.info('Computing normalization factor and dataset-wide mean and variance per marker...')
     sids = [os.path.splitext(f)[0]
         for f in os.listdir(pixelsdir) if f.endswith('.nc') and not f.startswith('.')]
     pixels = np.concatenate([
@@ -133,7 +132,7 @@ def prepare(load, filepaths, orig_pixel_size, markers, get_foreground, norm_by_b
             xr.open_dataarray(f'{pixelsdir}/{sid}.nc').astype(np.float32),
             xr.open_dataarray(f'{masksdir}/{sid}.nc')
             )
-        for sid in pb(sids)])
+        for sid in settings.progress(sids)])
     gc.collect()
     _, pixels = norm_by_background(pixels)
     ntranscripts = pixels.sum(axis=1, dtype=np.float64)
@@ -143,8 +142,8 @@ def prepare(load, filepaths, orig_pixel_size, markers, get_foreground, norm_by_b
     stds = pixels.std(axis=0, dtype=np.float64)
     del pixels; gc.collect()
     
-    print('Normalizing and writing')
-    for sid in pb(sids):
+    logger.info('Normalizing and writing')
+    for sid in settings.progress(sids):
         s = xr.open_dataarray(f'{pixelsdir}/{sid}.nc').astype(np.float32)
         mask = xr.open_dataarray(f'{masksdir}/{sid}.nc')
         s = s.where(mask, other=0)

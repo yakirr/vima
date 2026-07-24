@@ -4,16 +4,15 @@ from scipy.ndimage import convolve
 import scanpy as sc
 import anndata as ad
 from matplotlib import pyplot as plt
-from tqdm import tqdm
-pb = lambda x: tqdm(x, ncols=100)
 import pandas as pd
 from . import util
+from .._settings import settings, logger
 import gc
 
 ###########################################
 # dimensionality reduction and integration
 ###########################################
-def metapixels_allsamples(normedpixelsdir, masksdir, sids, total_n_metapixels, plot=True):
+def metapixels_allsamples(normedpixelsdir, masksdir, sids, total_n_metapixels):
     """
     Pool metapixels across all samples for a more robust PCA fit.
 
@@ -46,14 +45,14 @@ def metapixels_allsamples(normedpixelsdir, masksdir, sids, total_n_metapixels, p
     nsamples = len(sids)
     nmp_per_sample = total_n_metapixels // nsamples
 
-    if plot:
+    if settings.show_plots():
         fig = plt.figure(figsize=(7,5))
 
-    print('Creating metapixels prior to PCA')
-    print(f'\t(will randomly downsample to {nmp_per_sample} metapixels per sample if needed.)')
+    logger.info('Creating metapixels prior to PCA')
+    logger.info(f'\t(will randomly downsample to {nmp_per_sample} metapixels per sample if needed.)')
     ref_markers = None
     ref_sid = None
-    for i, sid in enumerate(pb(sids)):
+    for i, sid in enumerate(settings.progress(sids, name='creating metapixels')):
         da = xr.open_dataarray(f'{normedpixelsdir}/{sid}.nc')
         mask_da = xr.open_dataarray(f'{masksdir}/{sid}.nc')
         
@@ -67,8 +66,8 @@ def metapixels_allsamples(normedpixelsdir, masksdir, sids, total_n_metapixels, p
             order_mismatch = not missing and not extra
             detail = (f'order differs' if order_mismatch else
                       f'{len(missing)} missing, {len(extra)} extra vs {ref_sid}')
-            print(f'\033[93mWARNING: {sid} has different markers ({len(markers)}) '
-                  f'than {ref_sid} ({len(ref_markers)}): {detail}\033[0m')
+            logger.warning(f'{sid} has different markers ({len(markers)}) '
+                           f'than {ref_sid} ({len(ref_markers)}): {detail}')
         
         means = xr.DataArray(da.attrs['means'], dims='marker')
         stds = xr.DataArray(da.attrs['stds'], dims='marker')
@@ -83,11 +82,11 @@ def metapixels_allsamples(normedpixelsdir, masksdir, sids, total_n_metapixels, p
             all_npixels[sid] = all_npixels[sid][ix]
 
         # visualize distribution of num non-empty pixels per metapixel in this sample
-        if plot:
+        if settings.show_plots():
             cdf(all_npixels[sid], plt.gca())
         gc.collect()
 
-    if plot:
+    if settings.show_plots():
         plt.title('CDF of # non-empty pixels per metapixel, by sample')
         plt.xlabel('# non-empty pixels per metapixel')
         plt.ylabel('Frequency')
@@ -125,7 +124,7 @@ def metapixels(s, mask, npixels_thresh=0):
     return pd.DataFrame(data=mp[metapixels_mask] / npixels[metapixels_mask][:,None], columns=markers), npixels[metapixels_mask]
 
 # mps should be an array of dataframes containing metapixels
-def pca_metapixels(mps, k, plot=True):
+def pca_metapixels(mps, k):
     """
     Fit a ``k``-component PCA on the pooled metapixels.
 
@@ -146,7 +145,7 @@ def pca_metapixels(mps, k, plot=True):
         ``(loadings, C, allmp)``: the gene-by-component loading matrix, the
         feature correlation matrix, and the standardized metapixel AnnData.
     """
-    print('merging and standardizing metapixels')
+    logger.info('merging and standardizing metapixels')
     allmp = pd.concat(mps)
     allmp -= allmp.values.mean(axis=0, dtype=np.float64)
     allmp /= allmp.values.std(axis=0, dtype=np.float64)
@@ -154,14 +153,13 @@ def pca_metapixels(mps, k, plot=True):
     allmp.index = np.arange(len(allmp)).astype(str)
     allmp = ad.AnnData(X=allmp)
     C = np.corrcoef(allmp.X[::max(1,(len(allmp)//50000))].T)
-    print(f'Metapixel matrix: {allmp.shape[0]:,} pixels × {allmp.shape[1]} features')
+    logger.info(f'Metapixel matrix: {allmp.shape[0]:,} pixels × {allmp.shape[1]} features')
 
-    print('performing PCA...')
+    logger.info('performing PCA...')
     sc.tl.pca(allmp, n_comps=k)
     loadings = pd.DataFrame(data=allmp.varm['PCs'], columns=[f'PC{i}' for i in range(1,k+1)], index=allmp.var_names)
 
-    print()
-    print('top/bottom features per PC (features with negative loadings preceded by "-"):')
+    logger.info('top/bottom features per PC (features with negative loadings preceded by "-"):')
     top_bottom = {}
     for pc in loadings.columns:
         col = loadings[pc].sort_values(ascending=False)
@@ -169,12 +167,9 @@ def pca_metapixels(mps, k, plot=True):
             top_bottom[pc] = [f'-{g}' if col[g] < 0 else g for g in col.index]
         else:
             top_bottom[pc] = list(col.index[:5]) + [f'-{g}' for g in col.index[-5:]]
-    s = pd.DataFrame(top_bottom).to_string(index=False).split('\n')
-    print('\033[1;36m' + s[0] + '\033[0m')
-    print('\n'.join(s[1:]))
-    print()
+    logger.info(pd.DataFrame(top_bottom).to_string(index=False))
 
-    if plot:
+    if settings.show_plots():
         plt.figure(figsize=(4, len(loadings)/6))
         plt.imshow(loadings, cmap='seismic', vmin=-0.5, vmax=0.5)
         plt.yticks(range(len(loadings)), loadings.index)
@@ -200,8 +195,8 @@ def pca_pixels(normedpixelsdir, masksdir, pcloadings, sids):
     pcs = []
     sid_labels = []
 
-    print('Applying PCA projection to each sample')
-    for sid in pb(sids):
+    logger.info('Applying PCA projection to each sample')
+    for sid in settings.progress(sids, name='pixels -> PCA space'):
         da = xr.open_dataarray(f'{normedpixelsdir}/{sid}.nc')
         mask_da = xr.open_dataarray(f'{masksdir}/{sid}.nc')
         

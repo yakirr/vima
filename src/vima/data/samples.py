@@ -5,8 +5,7 @@ import xarray as xr
 import pandas as pd
 import matplotlib.pyplot as plt
 import cv2 as cv2
-from tqdm import tqdm
-pb = lambda x: tqdm(x, ncols=100)
+from .._settings import settings
 
 def read_samples(files, stop_after=None):
     """
@@ -30,7 +29,7 @@ def read_samples(files, stop_after=None):
     if stop_after is None: stop_after = len(files)
 
     samples = {}
-    for f in pb(files[:stop_after]):
+    for f in settings.progress(files[:stop_after], name='read samples'):
         s = xr.open_dataarray(f).astype(np.float32)
         s.attrs['sid'] = os.path.splitext(os.path.basename(f))[0]
         samples[s.sid] = s

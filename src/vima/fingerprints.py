@@ -5,8 +5,7 @@ import scanpy as sc
 import scipy.sparse as sp
 import cna
 import copy
-from tqdm import tqdm
-pb = lambda x: tqdm(x, ncols=100)
+from ._settings import settings, logger
 
 
 class _ObsmView:
@@ -151,7 +150,7 @@ class Fingerprints:
                        'n_neighbors': 15, 'use_rep': 'X', 'n_pcs': None},
         }
         if make_umap:
-            print('Computing UMAP...')
+            logger.info('Computing UMAP...')
             sc.tl.umap(D, neighbors_key='neighbors')
         return D
 
@@ -165,7 +164,7 @@ class Fingerprints:
 
     def compute_nngs(self, **kwargs):
         """Recompute and store each model's nearest-neighbor graph."""
-        for i in pb(range(self.nmodels)):
+        for i in settings.progress(range(self.nmodels)):
             d = self.select_model(i)
             sc.pp.neighbors(d, **kwargs)
             self._adata.obsp[f'connectivities_{i}'] = d.obsp['connectivities']
@@ -220,7 +219,7 @@ class Fingerprints:
         NAM -= NAM.mean(axis=0)
         NAM /= NAM.std(axis=0)
         _, _, VT = np.linalg.svd(NAM, full_matrices=False)
-        print(VT.shape)
+        logger.debug('VT shape: %s', VT.shape)
         return pd.DataFrame(VT.T, index=NAM.columns,
                             columns=[f'PC{i+1}' for i in range(VT.shape[0])])
 

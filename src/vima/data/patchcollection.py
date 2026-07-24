@@ -4,10 +4,10 @@ from torchvision import transforms
 import numpy as np
 import pandas as pd
 import random
+import logging
 import torch
 from . import samples as vds
-from tqdm import tqdm
-pb = lambda x: tqdm(x, ncols=100)
+from .._settings import settings, logger
 
 class ToTorch:
     """Transform converting an array to a channels-first torch tensor."""
@@ -55,7 +55,7 @@ class PatchCollection(Dataset):
     """
 
     @staticmethod
-    def choose_patches(samples, patchsize, patchstride, max_frac_empty, verbose=False):
+    def choose_patches(samples, patchsize, patchstride, max_frac_empty):
         """
         Pick patch grid positions for each sample, keeping only patches with
         enough non-empty pixels.
@@ -72,7 +72,7 @@ class PatchCollection(Dataset):
         """
         patchmeta = []
 
-        for s in pb(samples.values()):
+        for s in settings.progress(samples.values(), name='choose patches'):
             mask = vds.get_mask(s)
             starts = np.array([
                 [i, j]
@@ -123,7 +123,7 @@ class PatchCollection(Dataset):
                 self.meta[col] = pd.factorize(self.meta.sid.map(mapping))[0]
                 self._covariate_cols.append(col)
 
-    def compute_stats(self, percentile_thresh, verbose=False):
+    def compute_stats(self, percentile_thresh):
         """
         Compute per-marker mean, std, and display percentiles over a random
         subset of patches.
@@ -139,12 +139,12 @@ class PatchCollection(Dataset):
         self.vmin = (-self.means - self.percentiles)/self.stds
         self.vmax = (-self.means + self.percentiles)/self.stds
 
-        if verbose:
+        if logger.isEnabledFor(logging.DEBUG):
             fmt = lambda a: '  '.join(f'{v:.2g}' for v in a)
-            print(f'per-channel means: {fmt(self.means)}')
-            print(f'per-channel stds:  {fmt(self.stds)}')
+            logger.debug(f'per-channel means: {fmt(self.means)}')
+            logger.debug(f'per-channel stds:  {fmt(self.stds)}')
 
-    def normalize(self, normalization, verbose=False):
+    def normalize(self, normalization):
         """
         Apply the chosen per-marker normalization to the stored patches.
 
@@ -157,8 +157,8 @@ class PatchCollection(Dataset):
         if normalization is not None and normalization not in ['center', 'standardize', 'none']:
             raise ValueError('normalization must equal "standardize" | "center" | "none" | None')
         
-        if verbose: print(f'Normalizing color channels (normalization={normalization})...')
-        
+        logger.debug(f'Normalizing color channels (normalization={normalization})...')
+
         self.empty = np.zeros(self.patches.shape[-1], dtype=np.float32)
         if normalization == 'standardize' or normalization == 'center':
             self.patches = self.patches - self.means[None,None,None,:]
@@ -169,22 +169,21 @@ class PatchCollection(Dataset):
         self.normalization = normalization
 
     def __init__(self, samples, patchsize=40, patchstride=10, max_frac_empty=0.8,
-                normalization='standardize', percentile_thresh=99, verbose=False,
+                normalization='standardize', percentile_thresh=99,
                 covariates=None, condition_on_sid=True):
         self.samples = samples
         self.patchstride = patchstride
         self._covariate_cols = []
-        self.meta = PatchCollection.choose_patches(samples, patchsize, patchstride, max_frac_empty, verbose=verbose)
+        self.meta = PatchCollection.choose_patches(samples, patchsize, patchstride, max_frac_empty)
         self.nmarkers = next(iter(samples.values())).sizes['marker']
 
         self.pytorch_mode()
         self.make_patchmeta(covariates=covariates, condition_on_sid=condition_on_sid)
-        self.compute_stats(percentile_thresh, verbose=verbose)
-        self.normalize(normalization=normalization, verbose=verbose)
+        self.compute_stats(percentile_thresh)
+        self.normalize(normalization=normalization)
         self.augmentation_off()
 
-    def refined(self, max_frac_empty, tol=1e-10, normalization='standardize', percentile_thresh=99,
-                verbose=False):
+    def refined(self, max_frac_empty, tol=1e-10, normalization='standardize', percentile_thresh=99):
         """
         Return a copy restricted to denser patches.
 
@@ -202,8 +201,7 @@ class PatchCollection(Dataset):
         keep = np.where(empty_frac < max_frac_empty)[0]
         result = copy.copy(self)
         result.subset(keep,
-                      normalization=normalization, percentile_thresh=percentile_thresh,
-                      verbose=verbose)
+                      normalization=normalization, percentile_thresh=percentile_thresh)
         return result
 
     @property
@@ -224,9 +222,9 @@ class PatchCollection(Dataset):
     def augmentation_on(self):
         """Enable random rotation and horizontal flip augmentation (pytorch mode only)."""
         if self.dim_order != 'pytorch':
-            print('WARNING: Data augmentation only available in pytorch mode. Will leave augmentation off')
+            logger.warning('Data augmentation only available in pytorch mode. Will leave augmentation off')
             return
-        print('\033[90m[PatchCollection: data augmentation on]\033[0m')
+        logger.debug('[PatchCollection: data augmentation on]')
         self.transform = transforms.Compose([
             ToTorch(),
             RandomDiscreteRotation(),
@@ -234,7 +232,7 @@ class PatchCollection(Dataset):
             ])
     def augmentation_off(self):
         """Disable rotation and flip augmentation."""
-        print('\033[90m[PatchCollection: data augmentation is off]\033[0m')
+        logger.debug('[PatchCollection: data augmentation is off]')
         self.transform = transforms.Compose([
             ToTorch(),
             ])
@@ -246,22 +244,22 @@ class PatchCollection(Dataset):
     def pytorch_mode(self):
         """Switch patch output to channels-first (C, H, W) torch layout."""
         self.dim_order = 'pytorch'
-        print('\033[90m[PatchCollection: in pytorch mode]\033[0m')
+        logger.debug('[PatchCollection: in pytorch mode]')
     def numpy_mode(self):
         """Switch patch output to ``(H, W, C)`` numpy layout and turn augmentation off."""
         self.dim_order = 'numpy'
         self.augmentation_off()
-        print('\033[90m[PatchCollection: in numpy mode]\033[0m')
+        logger.debug('[PatchCollection: in numpy mode]')
 
-    def subset(self, ix, percentile_thresh, normalization, verbose):
+    def subset(self, ix, percentile_thresh, normalization):
         """
         Restrict the collection in place to the given patch indices and recompute
         normalization statistics.
         """
         self.patches = self.patches[ix]
         self.meta = self.meta.iloc[ix]
-        self.compute_stats(percentile_thresh, verbose=verbose)
-        self.normalize(normalization=normalization, verbose=verbose)
+        self.compute_stats(percentile_thresh)
+        self.normalize(normalization=normalization)
 
     def __repr__(self):
         ps = self.meta.patchsize.iloc[0]

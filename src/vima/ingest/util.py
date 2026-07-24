@@ -4,6 +4,7 @@ import pandas as pd
 import xarray as xr
 import gc
 import matplotlib.pyplot as plt
+from .._settings import logger
 
 compression = {'zlib': True, 'complevel': 2} # settings for writing xarrays
 
@@ -29,7 +30,7 @@ def write_xarray(s, fname):
 ###########################################
 # for creating raw pixel files
 ###########################################
-def transcriptlist_to_pixellist(transcriptlist, x_col, y_col, gene_col, pixel_size=10, verbose=False):
+def transcriptlist_to_pixellist(transcriptlist, x_col, y_col, gene_col, pixel_size=10):
     """
     Bin a transcript table into a per-pixel gene-count table.
 
@@ -40,14 +41,14 @@ def transcriptlist_to_pixellist(transcriptlist, x_col, y_col, gene_col, pixel_si
     """
     # adds dummy rows such that there is at least one entry for every possible x- and y- value
     # between the min and max values
-    def complete(pl, colname, genes, fill=0., verbose=True):
+    def complete(pl, colname, genes, fill=0.):
         vals = np.sort(pl[colname].unique())
         min_col = vals.min() // 1
         max_col = vals.max() // 1
         delta = int(min(vals[1:] - vals[:-1]))
         full_range = list(np.arange(min_col, max_col + 1, delta))
         locs_toadd = np.setdiff1d(full_range, vals)
-        if verbose: print(f'\tadding {colname}={locs_toadd}')
+        logger.debug(f'\tadding {colname}={locs_toadd}')
         toadd = pl.iloc[:len(locs_toadd)].copy()
         toadd[colname] = locs_toadd
         toadd[genes] = fill
@@ -62,7 +63,7 @@ def transcriptlist_to_pixellist(transcriptlist, x_col, y_col, gene_col, pixel_si
     pl = pixels.rename_axis(None, axis=1)
     genes = pl.columns[2:]
 
-    return complete(complete(pl, 'pixel_x', genes, verbose=verbose), 'pixel_y', genes, verbose=verbose)
+    return complete(complete(pl, 'pixel_x', genes), 'pixel_y', genes)
 
 def df_to_xarray32(df):
     """Convert a pivoted pixel DataFrame into a float32 ``(y, x, marker)`` DataArray."""

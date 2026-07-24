@@ -3,9 +3,7 @@ import numpy as np
 import cv2
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 from ..data import samples as vds
-
-from tqdm import tqdm
-pb = lambda x: tqdm(x, ncols=100)
+from .._settings import settings
 
 
 def plot_sample_with_patches(s, marker, patchmeta, remove_margin=False, ax=None, show=True, **kwargs):
@@ -68,7 +66,7 @@ def plot_samples_with_patches(samples, marker, patchmeta, ncols=5, **kwargs):
     """
     nrows = int(np.ceil(len(samples) / ncols))
     fig, axs = plt.subplots(nrows, ncols, figsize=(3*ncols, 3*nrows))
-    for ax, s in pb(zip(axs.flatten(), samples)):
+    for ax, s in settings.progress(zip(axs.flatten(), samples)):
         plot_sample_with_patches(s, marker, patchmeta, ax=ax, show=False, **kwargs)
         ax.set_title(s.sid)
     fig.tight_layout()

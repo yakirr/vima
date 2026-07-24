@@ -11,9 +11,8 @@ import warnings
 import scipy.sparse as sp
 import scipy.stats as st
 from argparse import Namespace
-from tqdm import tqdm
 from .fingerprints import Fingerprints
-pb = lambda x: tqdm(x, ncols=100)
+from ._settings import Verbosity, settings, logger
 
 def anndata(patchmeta, Z, var_names=None, use_rep='X', n_comps=10, **kwargs):
     """
@@ -86,7 +85,7 @@ def apply(models, P, batch_size=1000, with_mse=False):
     if with_mse:
         MSEs = {modelid: [] for modelid in range(len(models))}
     with torch.no_grad():
-        for batch in pb(eval_loader):
+        for batch in settings.progress(eval_loader, name='apply models'):
             for modelid, model in enumerate(models):
                 if with_mse:
                     x_recon, mean, _ = model(batch, sample_from_latent=False)
@@ -129,12 +128,12 @@ def latentreps(models, P, use_rep='X', n_comps=100, with_mse=True, **kwargs):
         Per-model embeddings and neighbor graphs, with ``.obs`` carrying patch
         metadata.
     """
-    print('applying models')
+    logger.info('applying models')
     result = apply(models, P, with_mse=with_mse)
     Zs, MSEs = result if with_mse else (result, None)
 
-    print('computing nearest-neighbor graphs')
-    ds = [anndata(P.meta, Z, use_rep=use_rep, n_comps=n_comps, **kwargs) for Z in pb(Zs)]
+    logger.info('computing nearest-neighbor graphs')
+    ds = [anndata(P.meta, Z, use_rep=use_rep, n_comps=n_comps, **kwargs) for Z in settings.progress(Zs, name='nearest-neighbor graphs')]
     fp = Fingerprints.from_list(ds)
     
     if MSEs is not None:
@@ -288,7 +287,7 @@ def _association(MAMresid, M, y, batches, donorids, rng, Nnull=10_000,
 
     # compute global p-vaule
     p = ((nullglobalstats >= globalstat).sum() + 1)/(len(nullglobalstats) + 1)
-    print(f'\033[32mP = {p}\033[0m')
+    settings.result(f'\033[32mP = {p}\033[0m')
     if p <= 1/(Nnull + 1)+1e-10:
         warnings.warn('global association p-value attained minimal possible value. '+\
                 'Consider increasing Nnull')
@@ -311,7 +310,7 @@ def _association(MAMresid, M, y, batches, donorids, rng, Nnull=10_000,
     return Namespace(**res)
 
 
-def compute_mams(ds, sid_name, nsteps=None, self_weight=1, show_progress=False):
+def compute_mams(ds, sid_name, nsteps=None, self_weight=1, show_progress=None):
     """
     Precompute per-model sample-by-microniche abundance matrices.
 
@@ -331,9 +330,11 @@ def compute_mams(ds, sid_name, nsteps=None, self_weight=1, show_progress=False):
     list
         One abundance matrix per model.
     """
-    print('computing MAT') #TODO: rename MAM to MAT in code if we keep this nomenclature
+    if show_progress is None:
+        show_progress = settings.verbosity >= Verbosity.verbose
+    logger.info('computing MAT') #TODO: rename MAM to MAT in code if we keep this nomenclature
     MAMs = []
-    for d in tqdm(ds.modelspecific_fingerprints(), total=ds.nmodels, ncols=100):
+    for d in settings.progress(ds.modelspecific_fingerprints(), total=ds.nmodels, name='compute MAMs'):
         NAM = cna.tl._nam._nam(d, sid_name, nsteps=nsteps, self_weight=self_weight,
                                show_progress=show_progress)
         MAMs.append(NAM)
@@ -342,7 +343,7 @@ def compute_mams(ds, sid_name, nsteps=None, self_weight=1, show_progress=False):
 def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_added='mncoef',
                 return_full=False, ridges=None, MAMs=None,
                 Nnull=10_000, seed=0, make_umap=True,
-                nsteps=None, show_progress=False, allow_low_sample_size=False,
+                nsteps=None, show_progress=None, allow_low_sample_size=False,
                 max_num_mns=5_000, **kwargs):
     """
     Test patch fingerprints for association with a sample-level phenotype.
@@ -391,6 +392,8 @@ def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_add
         `return_full` is True, returns ``(res, D)`` with the full result object
         in place of `p`.
     """
+    if show_progress is None:
+        show_progress = settings.verbosity >= Verbosity.verbose
     rng = np.random.default_rng(seed)
     np.random.seed(seed)
 
@@ -427,7 +430,7 @@ def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_add
                         show_progress=show_progress)
     MAMs_concat = res.namresid
 
-    print('performing association test')
+    logger.info('performing association test')
     n_samples, n_total = MAMs_concat.shape
     Npatches = n_total // ds.nmodels
     MAMresid = MAMs_concat.values.reshape(n_samples, ds.nmodels, Npatches)

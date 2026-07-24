@@ -1,3 +1,4 @@
+from ._settings import settings, Verbosity
 from . import data as d
 from . import cc
 from . import train as t
@@ -12,7 +13,8 @@ from .cc import latentreps, association, compute_mams
 from .fingerprints import Fingerprints
 from .patchfeatures import cell_type_counts, expression_profiles, test_features
 
-__all__ = ['d', 'cc', 't', 'pp', 'v', 'models',
+__all__ = ['settings', 'Verbosity',
+           'd', 'cc', 't', 'pp', 'v', 'models',
            'PatchCollection', 'read_samples', 'reindex_by_sid',
            'train', 'fit', 'set_seed', 'latentreps', 'association', 'compute_mams',
            'Fingerprints', 'cc', 'cell_type_counts', 'expression_profiles', 'test_features']

@@ -7,9 +7,8 @@ import anndata as ad
 import seaborn as sns
 import matplotlib.pyplot as plt
 import gc, os
-from tqdm import tqdm
-pb = lambda x: tqdm(x, ncols=100)
 from . import util, dimreduce
+from .._settings import settings, logger, Verbosity
 
 def _lisi_ratio(conn, labels):
     from scipy.sparse import issparse, diags as sp_diags
@@ -30,7 +29,7 @@ def _lisi_ratio(conn, labels):
     global_q = np.bincount(inv).astype(float) / n
     return mean_lisi, 1.0 / (global_q ** 2).sum()
 
-def visualize_pixels(pixels, ntoplot, input, colorby, include_pca_plot=False):
+def visualize_pixels(pixels, ntoplot, input, colorby):
     """
     UMAP a random subset of pixels, colored by covariates, and report mixing.
 
@@ -63,7 +62,7 @@ def visualize_pixels(pixels, ntoplot, input, colorby, include_pca_plot=False):
     sc.tl.umap(toplot_ad)
     
     for metavar in colorby:
-        if include_pca_plot:
+        if settings.show_plots('verbose'):
             sns.scatterplot(x='PC1', y='PC2', hue=metavar, data=toplot, palette='Set1', s=1, legend=False)
             plt.title(metavar)
             plt.show()
@@ -73,11 +72,10 @@ def visualize_pixels(pixels, ntoplot, input, colorby, include_pca_plot=False):
         # print LISI ratio
         n_unique = toplot_ad.obs[metavar].nunique()
         if n_unique < 2 or n_unique > 1000:
-            print(f'Avg LISI ({metavar}): skipped ({n_unique} unique values)')
+            logger.info(f'Avg LISI ({metavar}): skipped ({n_unique} unique values)')
         else:
             lisi, baseline = _lisi_ratio(toplot_ad.obsp['connectivities'], toplot_ad.obs[metavar])
-            print(f'\033[91mAvg LISI ({metavar}): {lisi:.2f}  [{baseline:.2f} = perfect mixing, 1 = not mixed]\033[0m')
-            print()
+            logger.info(f'Avg LISI ({metavar}): {lisi:.2f}  [{baseline:.2f} = perfect mixing, 1 = not mixed]')
 
     return toplot_ad
 
@@ -106,7 +104,7 @@ def add_covs(pca, sid_to_covs):
         pca[cov_name] = pca['sid'].map(sid_to_covs[cov_name])
     return ['sid'] + cov_names
 
-def pca_pixels(outdir, repname, nmetamarkers=10, plot=True, npixels_to_plot=50000,
+def pca_pixels(outdir, repname, nmetamarkers=10, npixels_to_plot=50000,
                total_n_metapixels=2_000_000, sid_to_covs=None):
     """
     Reduce normalized pixels to a small set of PCA "meta-markers".
@@ -147,11 +145,10 @@ def pca_pixels(outdir, repname, nmetamarkers=10, plot=True, npixels_to_plot=5000
 
     # create metapixels for more accurate PCA
     metapixels, npixels = dimreduce.metapixels_allsamples(normeddir, masksdir, sids,
-                                                          total_n_metapixels=total_n_metapixels,
-                                                          plot=plot)
+                                                          total_n_metapixels=total_n_metapixels)
 
     # PCA the metapixels
-    loadings, C, allmp = dimreduce.pca_metapixels(metapixels.values(), nmetamarkers, plot=plot)
+    loadings, C, allmp = dimreduce.pca_metapixels(metapixels.values(), nmetamarkers)
     loadings.to_feather(f'{processeddir}/_pcloadings.feather')
     del metapixels, allmp; gc.collect()
 
@@ -161,11 +158,11 @@ def pca_pixels(outdir, repname, nmetamarkers=10, plot=True, npixels_to_plot=5000
     # add covariates
     cov_names = add_covs(pca, sid_to_covs)
 
-    if plot:
+    if settings.show_plots():
         visualize_pixels(pca, npixels_to_plot, 'metamarkers', cov_names)
     return pca, loadings
 
-def harmonize(allpixels_pca, sid_to_covs=None, npixels_to_plot=50000, plot=True):
+def harmonize(allpixels_pca, sid_to_covs=None, npixels_to_plot=50000):
     """
     Batch-correct meta-marker pixels across samples with Harmony.
 
@@ -188,13 +185,16 @@ def harmonize(allpixels_pca, sid_to_covs=None, npixels_to_plot=50000, plot=True)
     harmony_cov_names = add_covs(allpixels_pca, sid_to_covs)
     pcs = [c for c in allpixels_pca.columns if c.startswith('PC')]
 
-    print('Running Harmony...')
-    harmony_out = hm.run_harmony(allpixels_pca[pcs].values, allpixels_pca, harmony_cov_names)
+    logger.info('Running Harmony...')
+    harmony_out = hm.run_harmony(allpixels_pca[pcs].values,
+                                 allpixels_pca,
+                                 harmony_cov_names,
+                                 verbose=settings.verbosity >= Verbosity.default)
 
     harmpixels = allpixels_pca.copy()
     harmpixels[pcs] = harmony_out.Z_corr
 
-    if plot:
+    if settings.show_plots():
         visualize_pixels(harmpixels, npixels_to_plot, 'harm. metamarkers', harmony_cov_names)
 
     return harmpixels
@@ -210,7 +210,7 @@ def write_harmonized(outdir, repname, harmpixels):
     processeddir = f'{outdir}/{repname}'
     pcs = [c for c in harmpixels.columns if c.startswith('PC')]
     hpcs = ['h'+c for c in pcs]
-    for sid in pb(harmpixels.sid.unique()):
+    for sid in settings.progress(harmpixels.sid.unique(), name='write harmonized samples'):
         mask = xr.open_dataarray(f'{masksdir}/{sid}.nc')
         pl = harmpixels[harmpixels.sid == sid]
         s_ = np.zeros((*mask.shape, len(hpcs)))
@@ -245,7 +245,7 @@ def sanity_checks(outdir, repname, npcs=1, nskip=3):
     sids = [os.path.splitext(f)[0]
         for f in os.listdir(processeddir) if f.endswith('.nc')]
 
-    print('all PCs of one sample')
+    logger.info('all PCs of one sample')
     da = xr.open_dataarray(f'{processeddir}/{sids[0]}.nc')
     s = da.astype(np.float32)
     da.close(); del da
@@ -253,7 +253,7 @@ def sanity_checks(outdir, repname, npcs=1, nskip=3):
     plt.show()
     del s
 
-    print('histogram of each pc')
+    logger.info('histogram of each pc')
     da0 = xr.open_dataarray(f'{processeddir}/{sids[0]}.nc')
     nmms = len(da0.marker)
     da0.close(); del da0
@@ -266,7 +266,7 @@ def sanity_checks(outdir, repname, npcs=1, nskip=3):
     del chunks
     harmpixels = harmpixels[(harmpixels != 0).sum(axis=1) > 0]
     plt.figure(figsize=(3*4, 2*int(np.ceil(nmms/4))))
-    for i in pb(range(nmms)):
+    for i in settings.progress(range(nmms), name='histogram of each pc'):
         plt.subplot(int(np.ceil(nmms/4)), 4, i+1)
         plt.hist(harmpixels[:,i], bins=1000)
     plt.tight_layout()
@@ -275,7 +275,7 @@ def sanity_checks(outdir, repname, npcs=1, nskip=3):
     gc.collect()
 
     for i in range(1, npcs+1):
-        print(f'PC{i} of several samples')
+        logger.info(f'PC{i} of several samples')
         fig, axs = plt.subplots(len(sids[::nskip])//5 + 1, 5, figsize=(16, 4*(len(sids[::nskip])//5 + 1)))
         flat_axs = axs.flatten()
         for ax in flat_axs:

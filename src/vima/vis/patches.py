@@ -6,8 +6,7 @@ import numpy as np
 import xarray as xr
 import scanpy as sc
 from scipy.optimize import linear_sum_assignment
-from tqdm import tqdm
-pb = lambda x, d: tqdm(x, ncols=100, desc=d)
+from .._settings import settings
 
 _PALETTE = [
     [1, 0, 0],   # red
@@ -175,7 +174,7 @@ class MarkersInSpace:
         for i, m in enumerate(new_markers):
             self._marker_to_idx[m] = len(self.markers) + i
         self.markers.extend(new_markers)
-        for sid, arr in pb(self._arrays.items(), f'Adding {len(new_markers)} markers'):
+        for sid, arr in settings.progress(self._arrays.items(), name=f'Adding {len(new_markers)} markers'):
             new_data = self._read_sid(sid, new_markers)
             self._arrays[sid] = np.concatenate([arr, new_data], axis=-1)
         self._ensure_sids_loaded(self._all_sids)  # load remaining sids for dataset-wide stats
@@ -183,7 +182,7 @@ class MarkersInSpace:
 
     def _ensure_sids_loaded(self, sids):
         added = False
-        for sid in pb(sids, 'Reading samples'):
+        for sid in settings.progress(sids, name='Reading samples'):
             if sid not in self._arrays and self.markers:
                 self._arrays[sid] = self._read_sid(sid, self.markers)
                 added = True

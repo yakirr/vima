@@ -3,8 +3,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from scipy.stats import rankdata
-from tqdm import tqdm
-pb = lambda x, desc: tqdm(x, ncols=100, desc=desc)
+from ._settings import settings, logger
 
 def cell_type_counts(
     cells,
@@ -55,7 +54,7 @@ def cell_type_counts(
     cell_types = sorted(cells[celltype_col].unique())
     counts = pd.DataFrame(0, index=patch_meta.index, columns=cell_types, dtype=int)
 
-    for sid, sid_cells in pb(cells.groupby(sid_col), 'cell_type_counts'):
+    for sid, sid_cells in settings.progress(cells.groupby(sid_col), name='cell_type_counts'):
         sid_patches = patch_meta[patch_meta[patch_sid_col] == sid]
         if len(sid_patches) == 0 or len(sid_cells) == 0:
             continue
@@ -121,7 +120,7 @@ def expression_profiles(
 
     result = None
 
-    for sid in pb(sids, 'expression_profiles'):
+    for sid in settings.progress(sids, name='expression_profiles'):
         sid_patches = patch_meta[patch_meta[patch_sid_col] == sid]
         sample = xr.open_dataarray(os.path.join(directory, f'{sid}.nc')).load()
         marker_names = sample.coords['marker'].values.tolist()
@@ -297,7 +296,7 @@ def test_features(
     donors   = _align(unit_of_analysis, 'unit_of_analysis')
     X = features.values.astype(float)
 
-    print(f'Comparing {group_a.sum()} patches (Group A) to {group_b.sum()} patches (Group B).')
+    logger.info(f'Comparing {group_a.sum()} patches (Group A) to {group_b.sum()} patches (Group B).')
     if group_a.sum() == 0 or group_b.sum() == 0:
         raise ValueError('Each group must have at least one patch')
 

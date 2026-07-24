@@ -10,8 +10,7 @@ from tempfile import TemporaryDirectory
 
 from vima.data.patchcollection import PatchCollection
 from .logging import LossLogger
-from tqdm import tqdm
-pb = lambda x: tqdm(x, ncols=100)
+from .._settings import settings, logger
 
 def set_seed(seed=0, deterministic=True):
     """
@@ -82,7 +81,7 @@ def train_one_epoch(models : list[nn.Module], train_dataset : Dataset,
         drop_last=len(train_dataset) > 3 * batch_size, #to prevent throwing away examples if dataset is small
         generator=generator)
 
-    print(f'#batches: {len(train_loader)}')
+    logger.info(f'#batches: {len(train_loader)}')
     for n, batch in enumerate(train_loader):
         x, sids = batch
         losses = {}
@@ -220,8 +219,8 @@ class TrainingCheckpoint:
         restored_log = pickle.loads(state['log'])
         restored_log.on_epoch_end = self.log.on_epoch_end
         self.log.__dict__.update(restored_log.__dict__)
-        print(f'Resumed from checkpoint — starting at epoch {self.resume_epoch}')
-        print(f'Hyperparams at checkpoint: {state["hyperparams"]}')
+        logger.info(f'Resumed from checkpoint — starting at epoch {self.resume_epoch}')
+        logger.info(f'Hyperparams at checkpoint: {state["hyperparams"]}')
 
 
 def full_training(models : list[nn.Module],
@@ -267,15 +266,15 @@ def full_training(models : list[nn.Module],
                 ckpt.load(checkpoint_dir, generator)
 
         for epoch in range(ckpt.resume_epoch, n_epochs + 1):
-            print(f'\033[33m===  Starting epoch {epoch} of {n_epochs}... ===\033[0m')
+            logger.info(f'===  Starting epoch {epoch} of {n_epochs}... ===')
             train_one_epoch(
                 models, train_dataset, generator, optimizers, schedulers, batch_size, log,
                     kl_weight=kl_weight * min(epoch / 5, 1) if kl_warmup else kl_weight)
 
-            print('Evaluating models on validation set...')
+            logger.info('Evaluating models on validation set...')
             per_channel_mses = []
             all_rlosses = []
-            for modelid, (model, scheduler, best_path) in enumerate(zip(pb(models), schedulers, best_model_params_paths)):
+            for modelid, (model, scheduler, best_path) in enumerate(zip(settings.progress(models), schedulers, best_model_params_paths)):
                 rlosses, kllosses, _, channel_losses = evaluate(model, val_dataset, generator, kl_weight,
                     detailed=True, subset=range(0, len(val_dataset), max(1, len(val_dataset)//2000)))
                 per_channel_mses.append(channel_losses)
@@ -293,7 +292,6 @@ def full_training(models : list[nn.Module],
             avg_rlosses = np.stack(all_rlosses).mean(axis=0)
             log.finalize_epoch(avg_rlosses, models, val_dataset,
                                per_channel_mses, per_channel_stds, ckpt.best_val_losses, ckpt.best_epoch)
-            print()
 
             if checkpoint_dir is not None:
                 ckpt.save(checkpoint_dir, epoch, generator)
