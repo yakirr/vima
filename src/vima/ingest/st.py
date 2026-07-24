@@ -6,6 +6,14 @@ from matplotlib import pyplot as plt
 from . import util
 
 def med_ntranscripts(load, filepaths, x_col, y_col, pixel_size=10):
+    """
+    Compute the normalization target: median transcripts per dense pixel.
+
+    Bins each sample's transcripts into ``pixel_size`` square pixels and takes
+    the median transcript count over pixels with at least 10 transcripts; returns
+    the mean of these per-sample medians, used as the total-count normalization
+    target.
+    """
     medians = []
     for i, filepath in enumerate(filepaths):
         print(f"\tProcessing sample {i+1}/{len(filepaths)}:", end=" ")
@@ -30,6 +38,34 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
                  pixel_size=10, min_mean=0.01, min_ntranscripts_per_pixel=10, min_ngenes_per_pixel=1,
                  min_npixels=20, min_totalcounts=500, plot_mean_var=True,
                  plot_spatial_hvgs=False):
+    """
+    Select highly variable genes and compute dataset-wide per-gene moments.
+
+    For each sample, rasterizes transcripts to pixels, QC-filters pixels,
+    log-normalizes to ``target_sum``, and selects the top highly variable genes;
+    the union of HVGs across samples (plus any ``genes_to_add``) is returned.
+    Also returns the pixel-count-weighted grand mean and grand std per gene
+    across the whole dataset (pooling within- and between-sample variance).
+
+    Parameters
+    ----------
+    load
+        Callable mapping a file path to ``(sample_id, transcript_dataframe)``.
+    target_sum
+        Per-pixel total-count normalization target (from `med_ntranscripts`).
+    n_top_genes_per_sample
+        Highly variable genes to select per sample; if None, all genes are kept.
+    genes_to_add
+        Genes to force-include regardless of variability.
+    min_mean
+        Minimum log-normalized mean for a selected HVG to be retained.
+
+    Returns
+    -------
+    tuple
+        ``(hvgs, grand_mean, grand_std)``: the list of genes to keep and
+        per-gene Series of the dataset-wide mean and standard deviation.
+    """
     union_hvgs = set()
     union_allgenes = set()
     means = []
@@ -135,6 +171,34 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
 
 def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel_size, target_sum, means, stds,
                                   genes, min_ngenes_per_pixel, min_ntranscripts_per_pixel, plots=True):
+    """
+    Rasterize one sample's transcripts to a log-normalized ``(y, x, gene)`` matrix.
+
+    Bins transcripts into square pixels, drops pixels failing the QC thresholds,
+    log-normalizes surviving pixels to ``target_sum``, restricts to ``genes``
+    (filling absent genes with zeros), and returns the pixel matrix alongside its
+    tissue mask. The dataset-wide ``means`` and ``stds`` are stored as attributes
+    on the matrix for later standardization (they are not applied here).
+
+    Parameters
+    ----------
+    sid
+        Sample ID; used to name the output arrays.
+    data
+        Transcript table for this sample.
+    target_sum
+        Per-pixel total-count normalization target.
+    means, stds
+        Dataset-wide per-gene mean and std, stored on the matrix's attrs.
+    genes
+        Genes to retain, in output order.
+
+    Returns
+    -------
+    tuple
+        ``(mask, matrix)``: the boolean tissue mask and the normalized
+        ``(y, x, gene)`` DataArray.
+    """
     print(f'\tNumber of transcripts: {len(data)/1e6:.2f}M')
 
     # process data
@@ -184,6 +248,23 @@ def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel
 def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_top_genes_per_sample, pixel_size, outdir,
                                     min_ntranscripts_per_pixel, min_ngenes_per_pixel,
                                     genes_to_add=[], basic_plots=True, plot_spatial_hvgs=False):
+    """
+    Shared driver that rasterizes and normalizes every sample to disk.
+
+    Backs `prepare_merfish` and `prepare_xenium5k`: computes the normalization
+    factor and dataset-wide gene set/moments once, then rasterizes and
+    normalizes each sample, writing its normalized matrix and mask under
+    ``outdir/normalized`` and ``outdir/masks``.
+
+    Parameters
+    ----------
+    load
+        Callable mapping a file path to ``(sample_id, transcript_dataframe)``.
+    n_top_genes_per_sample
+        Highly variable genes per sample; None keeps the full gene panel.
+    genes_to_add
+        Genes to force-include regardless of variability.
+    """
     if len(filepaths) == 0:
         print('No files found. Check your filepaths and try again.')
         return
@@ -218,6 +299,21 @@ def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_t
 def prepare_xenium5k(load, filepaths, x_col, y_col, gene_col, n_top_genes_per_sample, outdir,
                      pixel_size=10, genes_to_add=[], basic_plots=True, plot_spatial_hvgs=False,
                      min_ntranscripts_per_pixel=11, min_ngenes_per_pixel=1):
+    """
+    Rasterize and normalize large-panel (e.g. Xenium 5K) transcript data.
+
+    Like `prepare_merfish`, but selects highly variable genes per sample rather
+    than keeping the full panel, which is important for large gene panels. See
+    `prepare_merfish` for the shared parameters.
+
+    Parameters
+    ----------
+    n_top_genes_per_sample
+        Number of highly variable genes selected per sample; their union across
+        samples is used.
+    genes_to_add
+        Genes to force-include regardless of variability.
+    """
     rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col,
                                   n_top_genes_per_sample,
                                   pixel_size=pixel_size,
@@ -231,6 +327,33 @@ def prepare_xenium5k(load, filepaths, x_col, y_col, gene_col, n_top_genes_per_sa
 def prepare_merfish(load, filepaths, x_col, y_col, gene_col, outdir,
                     pixel_size=10, basic_plots=True,
                     min_ntranscripts_per_pixel=11, min_ngenes_per_pixel=1):
+    """
+    Rasterize and normalize MERFISH-scale transcript data into pixel matrices.
+
+    For each sample, bins transcripts into square pixels, log-normalizes, and
+    writes a ``(y, x, gene)`` matrix plus a tissue mask under ``outdir``. The
+    full gene panel is kept (no highly-variable-gene selection); use
+    `prepare_xenium5k` for large panels. Blank probes and low-quality
+    genes/transcripts should be removed before calling.
+
+    Parameters
+    ----------
+    load
+        Callable mapping a file path to ``(sample_id, transcript_dataframe)``.
+    filepaths
+        Paths to the per-sample transcript files.
+    x_col, y_col, gene_col
+        Columns in each transcript table giving x/y coordinates and gene name.
+    outdir
+        Output directory; normalized matrices and masks are written to
+        subdirectories.
+    pixel_size
+        Pixel side length in microns.
+    basic_plots
+        Show per-sample QC plots.
+    min_ntranscripts_per_pixel, min_ngenes_per_pixel
+        Minimum transcripts and distinct genes for a pixel to pass QC.
+    """
     rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col,
                                   None,
                                   pixel_size=pixel_size,

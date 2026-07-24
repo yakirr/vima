@@ -9,6 +9,22 @@ from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 
 def read_samples(files, stop_after=None):
+    """
+    Load rasterized samples from NetCDF files.
+
+    Parameters
+    ----------
+    files
+        List of ``.nc`` paths, or a glob pattern matching them.
+    stop_after
+        Read at most this many files.
+
+    Returns
+    -------
+    dict
+        Maps sample ID (file name without extension) to an xarray DataArray of
+        shape ``(y, x, marker)``.
+    """
     if type(files) == str:
         files = glob.glob(files)
     if stop_after is None: stop_after = len(files)
@@ -22,6 +38,24 @@ def read_samples(files, stop_after=None):
     return samples
 
 def reindex_by_sid(samplemeta, sid_to_donor):
+    """
+    Expand per-donor metadata to per-sample metadata.
+
+    Useful when several samples come from the same donor and metadata is only
+    available per donor.
+
+    Parameters
+    ----------
+    samplemeta
+        DataFrame indexed by donor.
+    sid_to_donor
+        Maps each sample ID to its donor.
+
+    Returns
+    -------
+    DataFrame
+        Copy of `samplemeta` indexed by sample ID, with a 'donor' column added.
+    """
     # change samplemeta so that each row is a sample rather than a donor
     sids = sid_to_donor.keys()
     in_our_data = pd.DataFrame({
@@ -31,9 +65,20 @@ def reindex_by_sid(samplemeta, sid_to_donor):
     return pd.merge(in_our_data, samplemeta, left_on='donor', right_index=True, how='left').set_index('sid', drop=True)
 
 def get_mask(s):
+    """Return a boolean mask of pixels that are non-empty in any marker."""
     return (s!=0).any(dim='marker')
 
 def union_patches_in_sample(patchmeta, s):
+    """
+    Return a binary image marking which pixels of a sample are covered by any patch.
+
+    Parameters
+    ----------
+    patchmeta
+        Patch metadata; rows for sample `s` supply patch origins and sizes.
+    s
+        The sample whose pixel grid defines the output image.
+    """
     res = s[:,:,0].copy()
     res[:,:] = 0
 

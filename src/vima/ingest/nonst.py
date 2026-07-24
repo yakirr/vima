@@ -8,6 +8,23 @@ from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 
 def foreground_mask_codex(s, real_markers, blur_width=5):
+    """
+    Compute a foreground/tissue mask for a CODEX image.
+
+    Sums the real-marker channels, log-scales to 8-bit intensity, Gaussian
+    blurs, and applies Otsu thresholding to separate tissue from background.
+
+    Parameters
+    ----------
+    real_markers
+        Markers (excluding blanks/controls) summed into the total-intensity
+        image.
+
+    Returns
+    -------
+    DataArray
+        Boolean ``(y, x)`` mask, True over tissue.
+    """
     # compute total intensity
     totals = s.sel(marker=real_markers).sum(dim='marker')
     totals = np.log1p(totals)
@@ -24,6 +41,31 @@ def foreground_mask_codex(s, real_markers, blur_width=5):
 
 def foreground_mask_if(s, real_markers, neg_ctrls, not_imaged_thresh, artifact_thresh, thresholding_method=threshold_otsu,
         neg_ctrl_pseudocount=0, blur_width=5):
+    """
+    Compute a foreground/tissue mask for an immunofluorescence image.
+
+    Forms a background-normalized total-intensity image (real markers divided by
+    negative-control markers), Gaussian blurs it, and thresholds it. Pixels
+    below ``not_imaged_thresh`` (not imaged) or above ``artifact_thresh``
+    (artifacts) are excluded when fitting the threshold and from the mask.
+
+    Parameters
+    ----------
+    real_markers
+        Signal markers summed into the numerator.
+    neg_ctrls
+        Negative-control markers summed into the denominator.
+    not_imaged_thresh, artifact_thresh
+        Lower/upper intensity bounds; pixels outside are treated as unimaged or
+        artifactual.
+    thresholding_method
+        Callable mapping the valid pixel intensities to a scalar threshold.
+
+    Returns
+    -------
+    DataArray
+        Boolean ``(y, x)`` mask, True over tissue.
+    """
     totals = (s.sel(marker=real_markers).sum(dim='marker') / (s.sel(marker=neg_ctrls).sum(dim='marker') + len(neg_ctrls) + neg_ctrl_pseudocount))
     totals = cv2.GaussianBlur(totals.data, (blur_width, blur_width),0)
     valid_pixels = totals[(totals > not_imaged_thresh) & (totals < artifact_thresh)]
@@ -34,6 +76,33 @@ def foreground_mask_if(s, real_markers, neg_ctrls, not_imaged_thresh, artifact_t
                 dims=['y','x'], name=s.name)
 
 def prepare(load, filepaths, orig_pixel_size, markers, get_foreground, norm_by_background, outdir, pixel_size=10, plot=True):
+    """
+    Rasterize and normalize non-transcriptomics image data into pixel matrices.
+
+    The imaging analogue of `prepare_merfish`: downsamples each sample's
+    hi-res ``(y, x, marker)`` array to ``pixel_size``, computes a foreground
+    mask, then background-normalizes, total-count-normalizes, and log-scales
+    every pixel using a dataset-wide count target and per-marker mean/std.
+    Writes downsampled counts, masks, and normalized matrices under ``outdir``.
+
+    Parameters
+    ----------
+    load
+        Callable mapping a file path to ``(sample_id, array)``, where ``array``
+        is a ``(y, x, marker)`` numpy array.
+    orig_pixel_size
+        Pixel side length in microns of the input images.
+    markers
+        Marker names labeling the array's channel axis.
+    get_foreground
+        Callable mapping a downsampled sample to its boolean tissue mask (e.g.
+        `foreground_mask_codex` / `foreground_mask_if`).
+    norm_by_background
+        Callable mapping a pixel-by-marker array to ``(kept_markers, normalized_array)``,
+        correcting for background/autofluorescence.
+    pixel_size
+        Target pixel side length in microns.
+    """
     pixelsdir = f'{outdir}/counts'
     masksdir = f'{outdir}/masks'
     normeddir = f'{outdir}/normalized'

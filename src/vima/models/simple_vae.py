@@ -32,6 +32,7 @@ class SimpleVAE(VAE):
         )
 
     def encode(self, xs):
+        """Encode patches to latent mean and log-variance, appending the per-channel average profile."""
         x, sid_nums = xs
         output = self.encoder_flatten(self.encoder(x))
         avg_profile = x.mean(axis=(2,3))
@@ -40,8 +41,10 @@ class SimpleVAE(VAE):
         return mean, logvar
 
     def decode(self, zs):
+        """Reconstruct patches from latent codes."""
         z, sid_nums = zs
         return self.decoder(z)
 
     def penultimate_layer(self, x : Tensor):
+        """Return the convolutional encoder feature maps for a batch of patches."""
         return self.encoder(x)

@@ -11,21 +11,33 @@ compression = {'zlib': True, 'complevel': 2} # settings for writing xarrays
 # utility functions
 ###########################################
 def xr_to_pixellist(s, mask):
+    """Extract the masked (non-empty) pixels of ``s`` as a flat ``(pixel, marker)`` array."""
     return s.data[mask.data]
 
 def set_pixels(s, mask, pl):
+    """Write pixel values ``pl`` back into the masked positions of ``s`` in place."""
     s.data[mask.data] = pl
 
 def ar():
+    """Set the current matplotlib axis to equal aspect ratio."""
     plt.gca().set_aspect('equal')
 
 def write_xarray(s, fname):
+    """Write a DataArray to a compressed NetCDF file."""
     s.to_netcdf(fname, encoding={s.name: compression}, engine="netcdf4")
 
 ###########################################
 # for creating raw pixel files
 ###########################################
 def transcriptlist_to_pixellist(transcriptlist, x_col, y_col, gene_col, pixel_size=10, verbose=False):
+    """
+    Bin a transcript table into a per-pixel gene-count table.
+
+    Snaps each transcript to a ``pixel_size`` grid and counts transcripts per
+    gene per pixel, returning a table with ``pixel_x``/``pixel_y`` columns and
+    one count column per gene. Empty rows are added so every grid coordinate
+    between the min and max is represented.
+    """
     # adds dummy rows such that there is at least one entry for every possible x- and y- value
     # between the min and max values
     def complete(pl, colname, genes, fill=0., verbose=True):
@@ -53,6 +65,7 @@ def transcriptlist_to_pixellist(transcriptlist, x_col, y_col, gene_col, pixel_si
     return complete(complete(pl, 'pixel_x', genes, verbose=verbose), 'pixel_y', genes, verbose=verbose)
 
 def df_to_xarray32(df):
+    """Convert a pivoted pixel DataFrame into a float32 ``(y, x, marker)`` DataArray."""
     markers = df.columns.get_level_values('markers').unique()
     return xr.DataArray(
             df.values.reshape((len(df), len(markers), -1)).transpose(0,2,1),
@@ -61,6 +74,7 @@ def df_to_xarray32(df):
         ).astype(np.float32)
 
 def pixellist_to_pixelmatrix(pl, markers):
+    """Pivot a per-pixel table into a dense ``(y, x, marker)`` DataArray, filling gaps with zeros."""
     # pivot in pandas
     s = pd.pivot_table(pl, values=markers, index='pixel_y', columns='pixel_x').fillna(0)
     s.columns.names = ['markers', 'pixel_x']
@@ -69,6 +83,7 @@ def pixellist_to_pixelmatrix(pl, markers):
     return df_to_xarray32(s)
 
 def downsample(sample, factor, aggregate=np.mean):
+    """Downsample a ``(y, x, marker)`` array by aggregating over ``factor``-by-``factor`` pixel blocks."""
     pad_width = (
         (int(factor - sample.shape[0] % factor), 0),
         (int(factor - sample.shape[1] % factor), 0),
@@ -81,6 +96,7 @@ def downsample(sample, factor, aggregate=np.mean):
     return smaller
 
 def hiresarray_to_downsampledxarray(sample, name, factor, pixelsize, markers):
+    """Downsample a hi-res ``(y, x, marker)`` array by ``factor`` and wrap it as a named DataArray with micron coordinates."""
     sample = downsample(sample, factor)
     sample = xr.DataArray(
             sample,

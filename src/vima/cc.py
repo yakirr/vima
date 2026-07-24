@@ -16,6 +16,27 @@ from .fingerprints import Fingerprints
 pb = lambda x: tqdm(x, ncols=100)
 
 def anndata(patchmeta, Z, var_names=None, use_rep='X', n_comps=10, **kwargs):
+    """
+    Build an AnnData with a neighbor graph from an embedding matrix.
+
+    Parameters
+    ----------
+    patchmeta
+        Per-patch metadata to store in ``.obs``.
+    Z
+        Patch-by-dimension embedding matrix.
+    use_rep
+        Representation used to build the neighbor graph: 'X' (the embedding) or
+        'X_pca'.
+    n_comps
+        Number of PCs when ``use_rep='X_pca'``.
+
+    Returns
+    -------
+    AnnData
+        Embedding in ``X``, patch metadata in ``.obs``, and a nearest-neighbor
+        graph.
+    """
     d = ad.AnnData(Z)
     if var_names is not None:
         d.var_names = var_names
@@ -31,6 +52,26 @@ def anndata(patchmeta, Z, var_names=None, use_rep='X', n_comps=10, **kwargs):
     return d
 
 def apply(models, P, batch_size=1000, with_mse=False):
+    """
+    Run a trained model ensemble over a PatchCollection to embed every patch.
+
+    Runs with augmentation disabled and each model in eval mode.
+
+    Parameters
+    ----------
+    models
+        Trained ensemble from `cVAE`.
+    P
+        Patches to embed.
+    with_mse
+        Also return per-patch, per-channel reconstruction error.
+
+    Returns
+    -------
+    ndarray or tuple
+        Model-by-patch-by-dimension embeddings; if `with_mse`, also a
+        model-by-patch-by-marker array of reconstruction MSEs.
+    """
     P.pytorch_mode()
     P.augmentation_off()
     for model in models:
@@ -61,6 +102,33 @@ def apply(models, P, batch_size=1000, with_mse=False):
     return Zs_out
 
 def latentreps(models, P, use_rep='X', n_comps=100, with_mse=True, **kwargs):
+    """
+    Compute patch fingerprints from a trained model ensemble.
+
+    Applies each model to every patch to obtain its latent embedding, then
+    builds a per-model nearest-neighbor graph over the patches. These are the
+    "fingerprints" consumed by `association`.
+
+    Parameters
+    ----------
+    models
+        Trained ensemble from `cVAE`.
+    P
+        Patches to embed (typically the refined collection).
+    use_rep
+        Representation used to build the neighbor graph: 'X' (the embedding) or
+        'X_pca'.
+    n_comps
+        Number of PCs when ``use_rep='X_pca'``.
+    with_mse
+        Also store per-patch and per-channel reconstruction error.
+
+    Returns
+    -------
+    Fingerprints
+        Per-model embeddings and neighbor graphs, with ``.obs`` carrying patch
+        metadata.
+    """
     print('applying models')
     result = apply(models, P, with_mse=with_mse)
     Zs, MSEs = result if with_mse else (result, None)
@@ -80,11 +148,6 @@ def latentreps(models, P, use_rep='X', n_comps=100, with_mse=True, **kwargs):
 
 def _tail_counts_total(znull, t2_sorted, nthreads):
     """Total count of znull**2 entries >= each (sorted) squared threshold.
-
-    Counts over all null columns at once: the mean of the per-column tail
-    counts equals the total tail count / ncols, so there is no need to sort
-    the matrix per column or loop over columns. searchsorted releases the GIL,
-    so the scan is split across threads for a several-fold speedup.
     """
     col_chunks = np.array_split(np.arange(znull.shape[1]), nthreads)
 
@@ -102,6 +165,27 @@ def _tail_counts_total(znull, t2_sorted, nthreads):
 
 
 def empirical_fdrs(z, znull, thresholds):
+    """
+    Compute the empirical FDR at each threshold from observed and null statistics.
+
+    At each threshold the FDR estimate is the mean number of null statistics
+    exceeding it (per null realization) divided by the number of observed
+    statistics exceeding it, comparing magnitudes.
+
+    Parameters
+    ----------
+    z
+        Observed per-microniche statistics.
+    znull
+        Null statistics, one column per permutation (aligned with `z`).
+    thresholds
+        Thresholds at which to evaluate the FDR.
+
+    Returns
+    -------
+    ndarray
+        Estimated FDR at each threshold.
+    """
     if znull.shape[0] != len(z):
         raise ValueError("shape mismatch")
 
@@ -129,6 +213,33 @@ def _power_ratio(x, power, axis):
 
 def _association(MAMresid, M, y, batches, donorids, rng, Nnull=10_000,
                  max_num_mns=5_000, show_progress=False):
+    """
+    Run the permutation-based microniche association test.
+
+    Correlates each microniche's residualized cross-sample abundance with the
+    covariate-conditioned phenotype, meta-analyzing across models, and calibrates
+    both a global p-value and per-microniche FDRs against permutation nulls. Null
+    phenotypes are drawn at the donor level when `donorids` is given, or within
+    `batches` if that is given, or unconditionally otherwise.
+
+    Parameters
+    ----------
+    MAMresid
+        Residualized abundances, shaped sample-by-model-by-microniche.
+    M
+        Residualization matrix (sample-by-sample) used to residualize any covariates
+        out of MAMresid.
+    y
+        Sample-level phenotype.
+    max_num_mns
+        Cap on microniches subsampled for the global and FDR computations.
+
+    Returns
+    -------
+    Namespace
+        Global p-value, per-microniche and per-model coefficients, mixing
+        weights, FDR table, and the associated null distributions.
+    """
     # prep data
     y = (y - y.mean())/y.std()
     n = len(y)
@@ -201,11 +312,25 @@ def _association(MAMresid, M, y, batches, donorids, rng, Nnull=10_000,
 
 
 def compute_mams(ds, sid_name, nsteps=None, self_weight=1, show_progress=False):
-    """Compute the per-model MAT (list of raw NAM DataFrames) once so it can be reused across
-    phenotypes via association(..., MAMs=...). This performs only the (expensive) diffusion;
-    batch QC and sample/covariate filtering are applied later inside association(), so no batch
-    information is needed here and a single precomputed MAT can be reused across different
-    batch/covariate/phenotype specifications."""
+    """
+    Precompute per-model sample-by-microniche abundance matrices.
+
+    Runs only the expensive graph-diffusion step, independent of any phenotype,
+    batch, or covariate choice. Pass the result to ``association(..., MAMs=...)``
+    to reuse it across multiple phenotypes without recomputing.
+
+    Parameters
+    ----------
+    ds
+        Fingerprints from `latentreps`.
+    sid_name
+        Column in ``ds.obs`` giving each patch's sample ID.
+
+    Returns
+    -------
+    list
+        One abundance matrix per model.
+    """
     print('computing MAT') #TODO: rename MAM to MAT in code if we keep this nomenclature
     MAMs = []
     for d in tqdm(ds.modelspecific_fingerprints(), total=ds.nmodels, ncols=100):
@@ -219,6 +344,53 @@ def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_add
                 Nnull=10_000, seed=0, make_umap=True,
                 nsteps=None, show_progress=False, allow_low_sample_size=False,
                 max_num_mns=5_000, **kwargs):
+    """
+    Test patch fingerprints for association with a sample-level phenotype.
+
+    Fits a covariate-aware model relating each microniche's cross-sample
+    abundance to the phenotype, assessing significance by permutation. Returns
+    both a global p-value for the dataset and a per-microniche coefficient with
+    an empirical FDR.
+
+    Parameters
+    ----------
+    ds
+        Fingerprints from `latentreps`.
+    y
+        Sample-level phenotype indexed by sample ID (e.g. case/control).
+    sid_name
+        Column in ``ds.obs`` giving each patch's sample ID.
+    batches
+        Sample-level batch labels to condition on.
+    covs
+        Sample-level covariates to control for.
+    donorids
+        Sample-level donor IDs; when given, permutations are done at the donor
+        level to respect repeated samples per donor. This cannot be used together
+        with `batches`.
+    key_added
+        Name for the per-microniche coefficient column written to ``D.obs``.
+    return_full
+        If True, return the full internal result object instead of just the
+        p-value (see Returns).
+    MAMs
+        Precomputed abundance matrices from `compute_mams`; recomputed if None.
+    Nnull
+        Number of null permutations.
+    make_umap
+        Compute a UMAP of the microniche graph for visualization.
+    max_num_mns
+        Cap on the number of microniches used for the statistical tests.
+
+    Returns
+    -------
+    tuple
+        ``(p, D)`` where `p` is the global association p-value and `D` is an
+        AnnData of microniches carrying per-microniche coefficients
+        (``D.obs[key_added]``) and FDRs (``D.obs[f'{key_added}_fdr']``). If
+        `return_full` is True, returns ``(res, D)`` with the full result object
+        in place of `p`.
+    """
     rng = np.random.default_rng(seed)
     np.random.seed(seed)
 

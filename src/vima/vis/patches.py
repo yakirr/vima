@@ -37,6 +37,27 @@ def _plot_separate(patches, markers, vmin, vmax, cmap='seismic', show=True):
 
 def _plot_composite(patches, markers, colors, vmin, vmax, features=None, nx=5, ny=5, show=True,
                     subfig=None):
+    """
+    Render patches as additive-RGB composites on an nx × ny grid.
+
+    Each marker is scaled to its ``(vmin, vmax)`` range and tinted by its color,
+    and the tinted channels are summed into one RGB image per patch. When
+    `features` are given (and there are enough patches), patches are placed on the
+    grid by a 2D UMAP of `features` so that similar patches sit near each other.
+
+    Parameters
+    ----------
+    patches
+        Patch-by-y-by-x-by-marker pixel array.
+    colors
+        Per-marker ``[R, G, B]`` color.
+    vmin, vmax
+        Per-marker scaling bounds.
+    features
+        Optional per-patch vectors used to arrange patches on the grid.
+    nx, ny
+        Grid columns and rows.
+    """
     N, ps, K = patches.shape[0], patches.shape[1], len(markers)
 
     rgb = np.zeros((N, ps, ps, 3))
@@ -81,20 +102,25 @@ def _plot_composite(patches, markers, colors, vmin, vmax, features=None, nx=5, n
 # ── MarkersInSpace ────────────────────────────────────────────────────────────
 
 class MarkersInSpace:
-    """Lazy cache of per-sample spatial arrays for a growing set of markers.
+    """
+    Lazy per-sample marker cache backing the patch-display functions.
 
-    Stores one (H, W, K) float32 array per sample for only the K registered
-    markers, rather than storing extracted patches (which would duplicate each
-    pixel ~16× at default stride/patchsize settings). New samples and markers
-    are loaded on demand when show_separate / show_composite are called.
-    vmin/vmax are computed over all non-empty pixels across all loaded samples
-    and updated whenever new samples or markers are added.
+    Loads and caches only the requested markers per sample and computes shared
+    color limits across all loaded samples, so repeated `show_separate` /
+    `show_composite` calls stay fast and consistently scaled. The standalone
+    `show_patches_separate` / `show_patches_composite` wrappers manage an
+    instance for you; construct one directly only for fine-grained control.
 
-    Args:
-        directory: Directory containing <sid>.nc files.
-        markers: Optional list of markers to pre-register (loaded lazily on first plot).
-        samples: Optional dict {sid: xarray.DataArray} to use instead of disk reads.
-        percentile: (low, high) percentile pair used to compute vmin/vmax (default (2, 98)).
+    Parameters
+    ----------
+    directory
+        Directory of ``<sid>.nc`` files.
+    markers
+        Markers to pre-register; otherwise loaded on first use.
+    samples
+        Optional ``{sid: DataArray}`` to read from instead of disk.
+    percentile
+        ``(low, high)`` percentiles defining the per-marker color limits.
     """
 
     def __init__(self, directory, markers=[], samples=None, percentile=(2, 98)):
@@ -188,15 +214,19 @@ class MarkersInSpace:
 
     def show_separate(self, patchmeta, markers=None, n=25, seed=None,
                       cmap='seismic', vmin=None, vmax=None, show=True):
-        """Show patches in a grid: one row per marker, one column per patch.
+        """
+        Show patches in a grid: one row per marker, one column per patch.
 
-        Args:
-            patchmeta: DataFrame subset of patches to draw from.
-            markers: Markers to display (defaults to all cached; new ones auto-loaded).
-            n: Number of patches to show (randomly downsampled if patchmeta is larger).
-            seed: Random seed for downsampling.
-            cmap: Matplotlib colormap.
-            vmin, vmax: Per-marker bounds (scalar, list, or None to use dataset-wide stats).
+        Parameters
+        ----------
+        patchmeta
+            Patches to draw from.
+        markers
+            Markers to display; default all cached (new ones auto-loaded).
+        n
+            Number of patches to show (randomly downsampled if more).
+        vmin, vmax
+            Per-marker color bounds (scalar, list, or None for dataset-wide).
         """
         if markers is None:
             markers = list(self.markers)
@@ -213,18 +243,26 @@ class MarkersInSpace:
 
     def show_composite(self, patchmeta, markers=None, features=None, colors=None,
                        n=25, nx=5, ny=5, seed=None, vmin=None, vmax=None, show=True, subfig=None):
-        """Show patches as additive RGB composites in an nx × ny grid.
+        """
+        Show patches as additive RGB composites in an nx × ny grid.
 
-        Args:
-            patchmeta: DataFrame subset of patches to draw from.
-            markers: Markers to display (defaults to all cached; new ones auto-loaded).
-            features: Array shape (len(patchmeta), D) aligned with patchmeta rows.
-                If provided, patches are arranged by 2D UMAP + Hungarian assignment.
-            colors: Per-marker [R, G, B] lists (auto-assigned from palette if None).
-            n: Number of patches (capped at nx*ny, randomly downsampled if needed).
-            nx, ny: Grid dimensions (columns, rows).
-            seed: Random seed for downsampling.
-            vmin, vmax: Per-marker bounds (scalar, list, or None to use dataset-wide stats).
+        Parameters
+        ----------
+        patchmeta
+            Patches to draw from.
+        markers
+            Markers to display; default all cached (new ones auto-loaded).
+        features
+            Per-patch vectors aligned with `patchmeta` rows; when given, patches
+            are arranged on the grid by 2D UMAP so similar patches sit together.
+        colors
+            Per-marker ``[R, G, B]`` colors; auto-assigned from a palette if None.
+        n
+            Number of patches (capped at ``nx*ny``, randomly downsampled if more).
+        nx, ny
+            Grid columns and rows.
+        vmin, vmax
+            Per-marker color bounds (scalar, list, or None for dataset-wide).
         """
         n = min(n, nx * ny)
         rng = np.random.default_rng(seed)
@@ -271,11 +309,23 @@ def _get_default_mis(directory, samples):
 
 def show_patches_separate(patchmeta, markers, directory, samples=None,
                           n=25, seed=None, cmap='seismic', vmin=None, vmax=None, show=True):
-    """Convenience wrapper around MarkersInSpace.show_separate using a global cache.
+    """
+    Show patches by marker, in a grid of one row per marker.
 
-    On the first call (or when directory changes) a new MarkersInSpace instance is
-    created and stored in vima.vis.default_mis. Subsequent calls with the same
-    directory reuse it, giving fast repeated plots with consistent color scales.
+    Reads pixel data from ``directory`` via a cached `MarkersInSpace` (reused
+    across calls with the same directory for speed and consistent color scales).
+    See `MarkersInSpace.show_separate` for the display parameters.
+
+    Parameters
+    ----------
+    patchmeta
+        Patches to draw from (e.g. a subset of ``D.obs``).
+    markers
+        Markers to display.
+    directory
+        Directory of ``<sid>.nc`` pixel files.
+    samples
+        Optional ``{sid: DataArray}`` to read from instead of disk.
     """
     return _get_default_mis(directory, samples).show_separate(
         patchmeta, markers, n=n, seed=seed, cmap=cmap, vmin=vmin, vmax=vmax, show=show)
@@ -285,11 +335,24 @@ def show_patches_composite(patchmeta, markers, directory, samples=None,
                             features=None, colors=None,
                             n=25, nx=5, ny=5, seed=None, vmin=None, vmax=None, show=True,
                             subfig=None):
-    """Convenience wrapper around MarkersInSpace.show_composite using a global cache.
+    """
+    Show patches as additive RGB composites in an nx × ny grid.
 
-    On the first call (or when directory changes) a new MarkersInSpace instance is
-    created and stored in vima.vis.default_mis. Subsequent calls with the same
-    directory reuse it, giving fast repeated plots with consistent color scales.
+    Reads pixel data from ``directory`` via a cached `MarkersInSpace` (reused
+    across calls with the same directory for speed and consistent color scales).
+    See `MarkersInSpace.show_composite` for the display parameters, including
+    `features`, which arranges similar patches near each other on the grid.
+
+    Parameters
+    ----------
+    patchmeta
+        Patches to draw from (e.g. a subset of ``D.obs``).
+    markers
+        Markers to composite (each assigned a color).
+    directory
+        Directory of ``<sid>.nc`` pixel files.
+    samples
+        Optional ``{sid: DataArray}`` to read from instead of disk.
     """
     return _get_default_mis(directory, samples).show_composite(
         patchmeta, markers, features=features, colors=colors,
@@ -300,20 +363,27 @@ def show_patches_cells(patchmeta, cells, x_col, y_col, celltype_col,
                        pixelsize_microns, nx=5, ny=5, sid_col='sid',
                        colors=None, seed=None, s=8, show=True, subfig=None,
                        include_only=None):
-    """Show an nx×ny grid of randomly chosen patches with cells overlaid as colored dots.
+    """
+    Show a grid of random patches with their segmented cells as colored dots.
 
-    Args:
-        patchmeta:         DataFrame with columns sid, x_microns, y_microns, patchsize.
-        cells:             DataFrame of cells containing sid_col, x_col, y_col, celltype_col.
-        x_col, y_col:      Column names for cell spatial coordinates (same units as x_microns/y_microns).
-        celltype_col:      Column name for cell-type labels.
-        pixelsize_microns: Size of one pixel in microns.
-        nx, ny:            Grid dimensions (columns × rows).
-        sid_col:           Column in cells that identifies the sample (default 'sid').
-        colors:            Dict {cell_type → color} for explicit assignment, or None for automatic.
-        seed:              Random seed for patch downsampling.
-        s:                 Scatter dot size.
-        show:              Whether to call plt.show().
+    Parameters
+    ----------
+    patchmeta
+        Patches to draw from, with 'sid', 'x_microns', 'y_microns', 'patchsize'.
+    cells
+        Segmented cells with sample ID, coordinates, and type.
+    x_col, y_col
+        Cell coordinate columns, in the same units as the patch micron columns.
+    celltype_col
+        Cell-type label column.
+    pixelsize_microns
+        Micron size of one pixel, used to size each patch.
+    nx, ny
+        Grid columns and rows (``nx*ny`` patches shown).
+    colors
+        ``{cell_type: color}`` for explicit colors; auto-assigned if None.
+    include_only
+        If given, only these cell types are drawn.
     """
     n = nx * ny
 

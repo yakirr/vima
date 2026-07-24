@@ -10,10 +10,12 @@ from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 
 class ToTorch:
+    """Transform converting an array to a channels-first torch tensor."""
     def __call__(self, x):
         return torch.tensor(x).permute(*range(x.ndim - 3), x.ndim-1, x.ndim-3, x.ndim-2)
 
 class RandomDiscreteRotation:
+    """Random 0/90/180/270 degree rotation augmentation."""
     def __call__(self, x):
         ntimes = np.random.choice([0,1,2,3])
         for i in range(ntimes):
@@ -21,8 +23,53 @@ class RandomDiscreteRotation:
         return x
 
 class PatchCollection(Dataset):
+    """
+    A torch Dataset of square spatial patches tiled from rasterized samples.
+
+    Patches are laid out on a regular grid (spacing `patchstride`) over each
+    sample and kept only where enough pixels are non-empty. Serves both as the
+    training dataset and as the source of patch metadata (``.meta``) carried
+    through the rest of the pipeline.
+
+    Parameters
+    ----------
+    samples
+        Maps sample ID to a ``(y, x, marker)`` DataArray, as from `read_samples`.
+    patchsize
+        Patch side length in pixels.
+    patchstride
+        Spacing in pixels between adjacent patch origins. Values below
+        `patchsize` produce overlapping patches.
+    max_frac_empty
+        Maximum fraction of empty pixels a patch may contain and still be kept.
+    normalization
+        Per-marker scaling applied to patches: 'standardize' (center and scale
+        to unit variance), 'center', or 'none'/None.
+    percentile_thresh
+        Percentile of absolute values used to set display bounds (`vmin`/`vmax`).
+    covariates
+        Extra per-sample covariates to condition the model on, as
+        ``{name: {sid: value}}``.
+    condition_on_sid
+        Whether to condition the model on sample ID (default True).
+    """
+
     @staticmethod
     def choose_patches(samples, patchsize, patchstride, max_frac_empty, verbose=False):
+        """
+        Pick patch grid positions for each sample, keeping only patches with
+        enough non-empty pixels.
+
+        Slides a `patchsize` window at spacing `patchstride` over each sample and
+        retains a position only if its fraction of non-empty pixels exceeds
+        ``1 - max_frac_empty``.
+
+        Returns
+        -------
+        DataFrame
+            Patch metadata with one row per kept patch, holding its sample ID,
+            pixel origin ``(x, y)``, micron origin, and patch size.
+        """
         patchmeta = []
 
         for s in pb(samples.values()):
@@ -49,6 +96,20 @@ class PatchCollection(Dataset):
         return patchmeta
     
     def make_patchmeta(self, covariates=None, condition_on_sid=True):
+        """
+        Extract each patch's pixel array and build integer-coded covariate columns.
+
+        Populates ``self.patches`` from the chosen patch positions and adds one
+        factorized column per conditioning covariate, including sample ID (when
+        `condition_on_sid`) and any extra `covariates`.
+
+        Parameters
+        ----------
+        covariates
+            Extra per-sample covariates as ``{name: {sid: value}}``.
+        condition_on_sid
+            Whether to add sample ID as a conditioning covariate.
+        """
         self.patches = np.array([
             self.samples[s].data[y:y+ps,x:x+ps,:]
             for s, x, y, ps in self.meta[['sid','x','y','patchsize']].values
@@ -63,6 +124,13 @@ class PatchCollection(Dataset):
                 self._covariate_cols.append(col)
 
     def compute_stats(self, percentile_thresh, verbose=False):
+        """
+        Compute per-marker mean, std, and display percentiles over a random
+        subset of patches.
+
+        Stores ``means``/``stds`` and the display bounds ``vmin``/``vmax`` derived
+        from the `percentile_thresh` percentile of absolute values.
+        """
         ix = np.random.choice(len(self), min(50000, len(self)), replace=False)
         subset = self.patches[ix]
         self.means = subset.mean(axis=(0,1,2), dtype=np.float64).astype(np.float32)
@@ -77,6 +145,15 @@ class PatchCollection(Dataset):
             print(f'per-channel stds:  {fmt(self.stds)}')
 
     def normalize(self, normalization, verbose=False):
+        """
+        Apply the chosen per-marker normalization to the stored patches.
+
+        Parameters
+        ----------
+        normalization
+            'standardize' (center and scale to unit variance), 'center', or
+            'none'/None.
+        """
         if normalization is not None and normalization not in ['center', 'standardize', 'none']:
             raise ValueError('normalization must equal "standardize" | "center" | "none" | None')
         
@@ -108,6 +185,18 @@ class PatchCollection(Dataset):
 
     def refined(self, max_frac_empty, tol=1e-10, normalization='standardize', percentile_thresh=99,
                 verbose=False):
+        """
+        Return a copy restricted to denser patches.
+
+        Keeps patches whose fraction of empty pixels is below `max_frac_empty`
+        and recomputes normalization statistics on the retained subset. Used to
+        refine training on tissue-rich patches after an initial pass.
+
+        Parameters
+        ----------
+        max_frac_empty
+            Maximum fraction of empty pixels a patch may contain and still be kept.
+        """
         import copy
         empty_frac = (np.abs(self.patches - self.empty[None,None,None,:]).max(axis=-1) < tol).mean(axis=(1, 2))
         keep = np.where(empty_frac < max_frac_empty)[0]
@@ -119,17 +208,21 @@ class PatchCollection(Dataset):
 
     @property
     def sid_nums(self):
+        """Map each sample ID to its integer code."""
         return {sid:sid_num for sid, sid_num in self.meta[['sid','sid_num']].drop_duplicates().values}
 
     @property
     def nsamples(self):
+        """Number of distinct samples represented across the patches."""
         return len(self.meta.sid.unique())
 
     @property
     def covariate_sizes(self):
+        """Number of categories in each conditioning covariate."""
         return [self.meta[col].nunique() for col in self._covariate_cols]
 
     def augmentation_on(self):
+        """Enable random rotation and horizontal flip augmentation (pytorch mode only)."""
         if self.dim_order != 'pytorch':
             print('WARNING: Data augmentation only available in pytorch mode. Will leave augmentation off')
             return
@@ -140,23 +233,31 @@ class PatchCollection(Dataset):
             transforms.RandomHorizontalFlip(),
             ])
     def augmentation_off(self):
+        """Disable rotation and flip augmentation."""
         print('\033[90m[PatchCollection: data augmentation is off]\033[0m')
         self.transform = transforms.Compose([
             ToTorch(),
             ])
 
     def add_donor_ids(self, donor_ids_series):
+        """Map a donor ID onto each patch via its sample ID."""
         self.meta['donor'] = self.meta.sid.map(donor_ids_series)
 
     def pytorch_mode(self):
+        """Switch patch output to channels-first (C, H, W) torch layout."""
         self.dim_order = 'pytorch'
         print('\033[90m[PatchCollection: in pytorch mode]\033[0m')
     def numpy_mode(self):
+        """Switch patch output to ``(H, W, C)`` numpy layout and turn augmentation off."""
         self.dim_order = 'numpy'
         self.augmentation_off()
         print('\033[90m[PatchCollection: in numpy mode]\033[0m')
 
     def subset(self, ix, percentile_thresh, normalization, verbose):
+        """
+        Restrict the collection in place to the given patch indices and recompute
+        normalization statistics.
+        """
         self.patches = self.patches[ix]
         self.meta = self.meta.iloc[ix]
         self.compute_stats(percentile_thresh, verbose=verbose)

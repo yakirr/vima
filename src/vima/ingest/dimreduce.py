@@ -14,6 +14,26 @@ import gc
 # dimensionality reduction and integration
 ###########################################
 def metapixels_allsamples(normedpixelsdir, masksdir, sids, total_n_metapixels, plot=True):
+    """
+    Pool metapixels across all samples for a more robust PCA fit.
+
+    Loads each sample's normalized pixels, standardizes them with the stored
+    per-marker means/stds, builds metapixels, and randomly downsamples each
+    sample to roughly ``total_n_metapixels // len(sids)`` metapixels. Warns if a
+    sample's markers differ from the first sample's.
+
+    Parameters
+    ----------
+    total_n_metapixels
+        Target total number of metapixels pooled across samples.
+
+    Returns
+    -------
+    tuple
+        ``(all_metapixels, all_npixels)``: dicts mapping sample ID to the
+        sample's metapixel DataFrame and to the per-metapixel count of
+        contributing non-empty pixels.
+    """
     def cdf(v, ax):
         sorted_data = np.sort(v)
         cdf = np.arange(1, len(sorted_data) + 1) / len(sorted_data)
@@ -77,6 +97,20 @@ def metapixels_allsamples(normedpixelsdir, masksdir, sids, total_n_metapixels, p
     return all_metapixels, all_npixels
 
 def metapixels(s, mask, npixels_thresh=0):
+    """
+    Pool each pixel with its neighbors into a metapixel.
+
+    Sums each marker over a 5x5 window centered on every pixel and divides by
+    the number of non-empty (masked) pixels contributing to that window, so each
+    metapixel is the average over its non-empty neighbors. Metapixels with at
+    most ``npixels_thresh`` contributing pixels are dropped.
+
+    Returns
+    -------
+    tuple
+        ``(metapixel_df, npixels)``: a marker-columned DataFrame of retained
+        metapixels and the per-metapixel count of contributing non-empty pixels.
+    """
     markers = s.marker.values
 
     # make metapixels and compute how many non-empty pixels and transcripts are in each metapixel
@@ -92,6 +126,26 @@ def metapixels(s, mask, npixels_thresh=0):
 
 # mps should be an array of dataframes containing metapixels
 def pca_metapixels(mps, k, plot=True):
+    """
+    Fit a ``k``-component PCA on the pooled metapixels.
+
+    Concatenates the per-sample metapixel tables, standardizes each feature,
+    fits PCA, and reports the top/bottom features per component.
+
+    Parameters
+    ----------
+    mps
+        Iterable of per-sample metapixel DataFrames (as returned by
+        `metapixels_allsamples`).
+    k
+        Number of principal components to fit.
+
+    Returns
+    -------
+    tuple
+        ``(loadings, C, allmp)``: the gene-by-component loading matrix, the
+        feature correlation matrix, and the standardized metapixel AnnData.
+    """
     print('merging and standardizing metapixels')
     allmp = pd.concat(mps)
     allmp -= allmp.values.mean(axis=0, dtype=np.float64)
@@ -130,6 +184,19 @@ def pca_metapixels(mps, k, plot=True):
     return loadings, C, allmp
 
 def pca_pixels(normedpixelsdir, masksdir, pcloadings, sids):
+    """
+    Project every sample's pixels onto the given PC loadings.
+
+    For each sample, standardizes the normalized pixels with the stored
+    per-marker means/stds, restricts to masked (non-empty) pixels, and projects
+    them onto ``pcloadings``.
+
+    Returns
+    -------
+    DataFrame
+        One row per pixel with a column per principal component plus a 'sid'
+        column giving the source sample.
+    """
     pcs = []
     sid_labels = []
 

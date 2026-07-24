@@ -32,11 +32,32 @@ class _ObsmView:
 
 
 class Fingerprints:
+    """
+    Ensemble of per-model patch embeddings and neighbor graphs for multiple
+    models.
+
+    Packs all informationinto a single AnnData that contains each model's
+    embedding (``X_i``), neighbor graph, and shared patch metadata. Produced
+    by `latentreps` and consumed by `association`. Patch metadata is exposed
+    via ``.obs``; auxiliary per-patch matrices (e.g. cell type abundances)
+    via ``.obsm``; subsetting and ``read_h5ad``/``write_h5ad`` behave like
+    AnnData.
+    """
+
     def __init__(self, adata):
         self._adata = adata
 
     @classmethod
     def from_list(cls, ds):
+        """
+        Pack a list of per-model AnnData embeddings and graphs into a Fingerprints.
+
+        Parameters
+        ----------
+        ds
+            One AnnData per model, sharing patch metadata, each carrying an
+            embedding and its neighbor graph.
+        """
         packed = ad.AnnData(obs=ds[0].obs.copy())
         packed.uns['n_models'] = len(ds)
         for i, d in enumerate(ds):
@@ -51,12 +72,14 @@ class Fingerprints:
 
     @property
     def nmodels(self):
+        """Number of models in the ensemble."""
         return self._adata.uns['n_models']
 
     def __getitem__(self, key):
         return Fingerprints(self._adata[key].copy())
 
     def select_model(self, i):
+        """Return model `i`'s embedding and neighbor graph as an AnnData."""
         d = ad.AnnData(X=self._adata.obsm[f'X_{i}'], obs=self._adata.obs.copy())
         d.obsp['connectivities'] = self._adata.obsp[f'connectivities_{i}']
         d.obsp['distances'] = self._adata.obsp[f'distances_{i}']
@@ -65,6 +88,7 @@ class Fingerprints:
         return d
 
     def modelspecific_fingerprints(self):
+        """Iterate over each model's embedding and graph as an AnnData."""
         return (self.select_model(i) for i in range(self.nmodels))
 
     def __repr__(self):
@@ -75,14 +99,36 @@ class Fingerprints:
 
     @property
     def obs(self):
+        """Per-patch metadata."""
         return self._adata.obs
-    
+
     @property
     def obsm(self):
+        """Auxiliary per-patch matrices (excluding the per-model embeddings)."""
         exclude = {f'X_{i}' for i in range(self.nmodels)}
         return _ObsmView(self._adata.obsm, exclude)
 
     def weighted_avg_graph(self, weights, kept, make_umap=True):
+        """
+        Combine the per-model microniche graphs into one weighted-average graph.
+
+        Averages the per-model connectivity and distance graphs over the retained
+        patches, weighting each model's contribution per microniche, and returns
+        the result as a single AnnData suitable for downstream visualization.
+
+        Parameters
+        ----------
+        weights
+            Per-model, per-microniche mixing weights.
+        kept
+            Boolean mask selecting which patches to include.
+
+        Returns
+        -------
+        AnnData
+            Microniches with the combined neighbor graph (and a UMAP if
+            `make_umap`).
+        """
         M = kept.sum()
         obs = self.obs.iloc[kept].copy(deep=True)
         obs.index = obs.index.astype(str)
@@ -110,6 +156,7 @@ class Fingerprints:
         return D
 
     def avg_graph(self, make_umap=True):
+        """Combine the per-model graphs with equal weights over all patches."""
         return self.weighted_avg_graph(
             np.ones((self.nmodels, len(self._adata))) / self.nmodels,
             kept=np.ones(len(self._adata), dtype=bool),
@@ -117,6 +164,7 @@ class Fingerprints:
         )
 
     def compute_nngs(self, **kwargs):
+        """Recompute and store each model's nearest-neighbor graph."""
         for i in pb(range(self.nmodels)):
             d = self.select_model(i)
             sc.pp.neighbors(d, **kwargs)
@@ -125,6 +173,22 @@ class Fingerprints:
             self._adata.uns[f'neighbors_{i}'] = d.uns['neighbors']
         
     def sample_pcs(self, sid_name='sid'):
+        """
+        Compute principal components of the sample-by-microniche abundance matrix.
+
+        Standardizes each microniche's abundance across samples, then returns the
+        left singular vectors as per-sample PC scores.
+
+        Parameters
+        ----------
+        sid_name
+            Column in ``.obs`` giving each patch's sample ID.
+
+        Returns
+        -------
+        DataFrame
+            Samples by PC.
+        """
         D = self.avg_graph(make_umap=False)
         NAM, _ = cna.tl.nam(D, sid_name)
         NAM -= NAM.mean(axis=0)
@@ -134,6 +198,23 @@ class Fingerprints:
                             columns=[f'PC{i+1}' for i in range(U.shape[1])])
     
     def mn_pcs(self, sid_name='sid'):
+        """
+        Compute principal components of the sample-by-microniche abundance matrix,
+        as per-microniche loadings.
+
+        Standardizes each microniche's abundance across samples, then returns the
+        right singular vectors as per-microniche PC scores.
+
+        Parameters
+        ----------
+        sid_name
+            Column in ``.obs`` giving each patch's sample ID.
+
+        Returns
+        -------
+        DataFrame
+            Microniches by PC.
+        """
         D = self.avg_graph(make_umap=False)
         NAM, _ = cna.tl.nam(D, sid_name)
         NAM -= NAM.mean(axis=0)
@@ -144,12 +225,15 @@ class Fingerprints:
                             columns=[f'PC{i+1}' for i in range(VT.shape[0])])
 
     def to_anndata(self):
+        """Concatenate all per-model embeddings into a single AnnData."""
         X = np.hstack([self._adata.obsm[f'X_{i}'] for i in range(self.nmodels)])
         return ad.AnnData(X=X, obs=self._adata.obs.copy())
 
     def write_h5ad(self, path):
+        """Write the fingerprints to an ``.h5ad`` file."""
         self._adata.write_h5ad(path)
 
     @classmethod
     def read_h5ad(cls, path):
+        """Load fingerprints previously saved with `write_h5ad`."""
         return cls(ad.read_h5ad(path))

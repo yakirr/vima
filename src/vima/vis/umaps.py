@@ -3,6 +3,21 @@ import scanpy as sc
 
 
 def plot_association(D, key='mncoef', fdr_thresh=0.1, ax=None, show=True, **kwargs):
+    """
+    Plot the microniche UMAP, highlighting significant microniches.
+
+    Microniches passing `fdr_thresh` are colored by their signed association
+    coefficient (red positive, blue negative); the rest are shown in gray.
+
+    Parameters
+    ----------
+    D
+        Association result AnnData from `association`.
+    key
+        Coefficient column in ``D.obs`` (with matching ``{key}_fdr``).
+    fdr_thresh
+        FDR cutoff for calling a microniche significant.
+    """
     if ax is None:
         ax = plt.gca()
     sig = D.obs[key].where(D.obs[f'{key}_fdr'] <= fdr_thresh, 0)

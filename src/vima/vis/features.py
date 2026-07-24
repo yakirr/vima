@@ -29,20 +29,26 @@ def plot_features(
     show=True,
     **kwargs,
 ):
-    """Plot patch-level feature distributions between two groups.
+    """
+    Plot patch-level feature distributions for two groups side by side.
 
-    Args:
-        features: DataFrame (n_patches × n_features).
-        group_a: boolean array, length n_patches — first group.
-        group_b: boolean array or None — second group; defaults to ~group_a.
-        n_top: features most enriched in group_a to show (default 10).
-        n_bottom: features most enriched in group_b to show (default 0).
-        markers: explicit list of features to plot; overrides n_top/n_bottom.
-        labels: [label_a, label_b] for the legend; defaults to ['a', 'b'].
-        kind: 'violin' (default) or 'box'.
-        ax: matplotlib axes; defaults to current axes.
-        show: call plt.show() when done (default True).
-        **kwargs: additional arguments passed to the seaborn plotting function.
+    Parameters
+    ----------
+    features
+        Patch-by-feature values (e.g. cell type abundances or expression).
+    group_a
+        Boolean array over patches selecting the first group.
+    group_b
+        Boolean array selecting the second group; defaults to ``~group_a``.
+    n_top, n_bottom
+        Number of features most enriched in each group to show; ignored when
+        `markers` is given.
+    markers
+        Explicit features to plot, overriding `n_top`/`n_bottom`.
+    labels
+        ``[label_a, label_b]`` for the legend.
+    kind
+        'violin' (default), 'box', or 'swarm'.
     """
     if ax is None:
         ax = plt.gca()
@@ -82,24 +88,32 @@ def plot_features_by_sample(
     connect=True,
     **kwargs,
 ):
-    """Plot sample-averaged feature values between two groups as a swarmplot.
+    """
+    Swarmplot of sample-averaged feature values for two groups.
 
-    Each dot is one sample's mean feature value across its patches in that group.
-    Samples with no patches in a group are omitted from that group's dots.
+    Each dot is one sample's mean feature value across its patches in that
+    group; samples with no patches in a group are omitted from it. This shows
+    per-sample effects that patch-level plots can obscure.
 
-    Args:
-        features: DataFrame (n_patches × n_features).
-        group_a: boolean array, length n_patches — first group.
-        group_b: boolean array or None — second group; defaults to ~group_a.
-        sample_key: Series aligned with features mapping each patch to its sample ID.
-        n_top: features most enriched in group_a to show (default 10).
-        n_bottom: features most enriched in group_b to show (default 0).
-        markers: explicit list of features to plot; overrides n_top/n_bottom.
-        labels: [label_a, label_b] for the legend; defaults to ['a', 'b'].
-        ax: matplotlib axes; defaults to current axes.
-        show: call plt.show() when done (default True).
-        connect: draw lines connecting paired samples across groups (default True).
-        **kwargs: additional arguments passed to sns.swarmplot.
+    Parameters
+    ----------
+    features
+        Patch-by-feature values.
+    group_a
+        Boolean array over patches selecting the first group.
+    group_b
+        Boolean array selecting the second group; defaults to ``~group_a``.
+    sample_key
+        Series over patches mapping each to its sample ID.
+    n_top, n_bottom
+        Number of features most enriched in each group to show; ignored when
+        `markers` is given.
+    markers
+        Explicit features to plot, overriding `n_top`/`n_bottom`.
+    labels
+        ``[label_a, label_b]`` for the legend.
+    connect
+        Draw lines linking each sample's two group means.
     """
     if ax is None:
         ax = plt.gca()

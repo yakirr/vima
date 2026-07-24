@@ -31,6 +31,26 @@ def _lisi_ratio(conn, labels):
     return mean_lisi, 1.0 / (global_q ** 2).sum()
 
 def visualize_pixels(pixels, ntoplot, input, colorby, include_pca_plot=False):
+    """
+    UMAP a random subset of pixels, colored by covariates, and report mixing.
+
+    Embeds ``ntoplot`` randomly sampled pixels using their PC columns and plots
+    the UMAP colored by each covariate in ``colorby``. For each covariate,
+    prints an average LISI ratio quantifying how well its categories mix (the
+    printed baseline marks perfect mixing, 1 marks no mixing).
+
+    Parameters
+    ----------
+    input
+        Label for the representation being embedded, used in plot titles.
+    colorby
+        Covariate column names to color the UMAP by.
+
+    Returns
+    -------
+    AnnData
+        The embedded subset, with the UMAP and neighbor graph attached.
+    """
     pcs = [c for c in pixels.columns if c.startswith('PC')]
     metavars = [c for c in pixels.columns if c not in pcs]
     np.random.seed(0)
@@ -62,6 +82,22 @@ def visualize_pixels(pixels, ntoplot, input, colorby, include_pca_plot=False):
     return toplot_ad
 
 def add_covs(pca, sid_to_covs):
+    """
+    Attach per-sample covariate columns to a pixel table (in place).
+
+    Maps each covariate in ``sid_to_covs`` onto the pixel table via its 'sid'
+    column.
+
+    Parameters
+    ----------
+    sid_to_covs
+        DataFrame indexed by sample ID with one column per covariate, or None.
+
+    Returns
+    -------
+    list
+        Covariate names including 'sid'.
+    """
     if sid_to_covs is not None:
         cov_names = list(sid_to_covs.columns)
     else:
@@ -72,6 +108,33 @@ def add_covs(pca, sid_to_covs):
 
 def pca_pixels(outdir, repname, nmetamarkers=10, plot=True, npixels_to_plot=50000,
                total_n_metapixels=2_000_000, sid_to_covs=None):
+    """
+    Reduce normalized pixels to a small set of PCA "meta-markers".
+
+    Fits PCA on spatially pooled metapixels across all samples, then projects
+    every pixel onto the top `nmetamarkers` components. This compresses the gene
+    panel into a compact representation for model training.
+
+    Parameters
+    ----------
+    outdir
+        Directory written by `prepare_merfish`/`prepare_xenium5k`.
+    repname
+        Name of the representation; PC loadings are saved under
+        ``outdir/repname``.
+    nmetamarkers
+        Number of principal components (meta-markers) to keep.
+    total_n_metapixels
+        Target number of pooled metapixels used to fit the PCA.
+    sid_to_covs
+        Optional per-sample covariates, used only for the diagnostic plots.
+
+    Returns
+    -------
+    tuple
+        ``(allpixels_pca, pc_loadings)``: the projected pixels (with a 'sid'
+        column) and the gene-by-component loading matrix.
+    """
     # prepare directory structure
     masksdir = f'{outdir}/masks'
     normeddir = f'{outdir}/normalized'
@@ -103,6 +166,23 @@ def pca_pixels(outdir, repname, nmetamarkers=10, plot=True, npixels_to_plot=5000
     return pca, loadings
 
 def harmonize(allpixels_pca, sid_to_covs=None, npixels_to_plot=50000, plot=True):
+    """
+    Batch-correct meta-marker pixels across samples with Harmony.
+
+    Parameters
+    ----------
+    allpixels_pca
+        Projected pixels from `pca_pixels`, with a 'sid' column.
+    sid_to_covs
+        Optional per-sample covariates to integrate over in addition to sample
+        ID.
+
+    Returns
+    -------
+    DataFrame
+        Copy of `allpixels_pca` with the PC columns replaced by their
+        Harmony-corrected values.
+    """
     import harmonypy as hm
 
     harmony_cov_names = add_covs(allpixels_pca, sid_to_covs)
@@ -120,6 +200,12 @@ def harmonize(allpixels_pca, sid_to_covs=None, npixels_to_plot=50000, plot=True)
     return harmpixels
 
 def write_harmonized(outdir, repname, harmpixels):
+    """
+    Write harmonized meta-marker pixels to per-sample ``.nc`` files.
+
+    Rasterizes the corrected pixels from `harmonize` back into ``(y, x, marker)``
+    matrices under ``outdir/repname``, ready to be loaded with `read_samples`.
+    """
     masksdir = f'{outdir}/masks'
     processeddir = f'{outdir}/{repname}'
     pcs = [c for c in harmpixels.columns if c.startswith('PC')]
@@ -138,6 +224,23 @@ def write_harmonized(outdir, repname, harmpixels):
         gc.collect()
 
 def sanity_checks(outdir, repname, npcs=1, nskip=3):
+    """
+    Plot diagnostics of the harmonized meta-marker representation.
+
+    Shows all meta-markers of one sample, a histogram of each meta-marker
+    pooled over all samples, and spatial maps of the first ``npcs`` meta-markers
+    across a subset of samples.
+
+    Parameters
+    ----------
+    repname
+        Representation subdirectory under ``outdir`` written by
+        `write_harmonized`.
+    npcs
+        Number of leading meta-markers to map spatially across samples.
+    nskip
+        Plot every ``nskip``-th sample in the spatial maps.
+    """
     processeddir = f'{outdir}/{repname}'
     sids = [os.path.splitext(f)[0]
         for f in os.listdir(processeddir) if f.endswith('.nc')]

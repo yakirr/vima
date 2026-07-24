@@ -6,6 +6,8 @@ from IPython import display
 from .. import vis as v
 
 class LossLogger:
+    """Accumulate and report per-model training/validation losses; returned by `train`."""
+
     def __init__(self, log_interval=20, detailed=True, Pmin=None, Pmax=None, on_epoch_end=None):
         self.log_interval = log_interval
         self.detailed = detailed
@@ -94,6 +96,7 @@ class LossLogger:
         self.chunkstarttime = time.time()
 
     def _print_epoch_log(self, vrlosses, models, val_dataset):
+        """Pretty-print and plot the per-epoch loss summary (internal)."""
         display.clear_output()
         plt.figure(figsize=(9,3))
         plt.subplot(1,2,1)

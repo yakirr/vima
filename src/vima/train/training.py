@@ -14,6 +14,15 @@ from tqdm import tqdm
 pb = lambda x: tqdm(x, ncols=100)
 
 def set_seed(seed=0, deterministic=True):
+    """
+    Seed Python, NumPy, and torch RNGs.
+
+    Parameters
+    ----------
+    deterministic
+        Also force deterministic cuDNN/MPS algorithms, trading speed for
+        reproducibility.
+    """
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
@@ -25,6 +34,14 @@ def set_seed(seed=0, deterministic=True):
         torch.backends.mps.benchmark = False
 
 def reconstruction_loss(x_true, x_pred : Tensor, per_sample: bool=False):
+    """
+    Compute the per-pixel-mean squared reconstruction error.
+
+    Parameters
+    ----------
+    per_sample
+        Return the per-patch error instead of the batch mean.
+    """
     x_true, _ = x_true
     sse = torch.sum((x_pred - x_true)**2, dim=(1,2,3))
     sse /= (x_true.shape[1]*x_true.shape[2]*x_true.shape[3])
@@ -35,6 +52,14 @@ def reconstruction_loss(x_true, x_pred : Tensor, per_sample: bool=False):
         return torch.mean(sse)
 
 def kl_loss(mean : Tensor, logvar : Tensor, per_sample: bool=False):
+    """
+    Compute the KL divergence of the latent posterior from a standard normal.
+
+    Parameters
+    ----------
+    per_sample
+        Return the per-patch divergence instead of the batch mean.
+    """
     kl = -0.5 * torch.sum(1 + logvar - mean.pow(2) - logvar.exp(),
             dim=tuple(range(1, mean.dim())))
     if per_sample:
@@ -46,6 +71,7 @@ def train_one_epoch(models : list[nn.Module], train_dataset : Dataset,
         generator : torch.Generator,
         optimizers : list[torch.optim.Optimizer], schedulers : list[LRScheduler],
         batch_size : int, log : LossLogger, kl_weight : float=1):
+    """Train every model in the ensemble for one epoch over the training set."""
     for model in models:
         model.train()
 
@@ -83,6 +109,22 @@ def evaluate(model : nn.Module, eval_dataset : Dataset,
              generator : torch.Generator,
              kl_weight : float,
              batch_size : int=1000, detailed : bool=False, subset=None, sample_from_latent=False):
+    """
+    Compute validation reconstruction and KL losses for one model.
+
+    Parameters
+    ----------
+    detailed
+        Also return per-patch embeddings and per-channel reconstruction error.
+    subset
+        Indices to restrict evaluation to.
+
+    Returns
+    -------
+    tuple
+        Per-patch reconstruction and KL losses when ``detailed``, plus
+        embeddings and per-channel error; otherwise the two mean losses.
+    """
     if subset is not None:
         eval_dataset = torch.utils.data.Subset(eval_dataset, subset)
 
@@ -190,7 +232,24 @@ def full_training(models : list[nn.Module],
         batch_size : int=128, n_epochs : int=20,
         kl_weight : float=1, kl_warmup : bool=True,
         checkpoint_dir : str=None):
+    """
+    Run the full multi-epoch training loop over the ensemble.
 
+    Trains each model for ``n_epochs``, evaluating on the validation set after
+    every epoch and keeping the weights from each model's best-scoring epoch.
+    Optionally checkpoints after each epoch and resumes from a checkpoint.
+
+    Parameters
+    ----------
+    per_channel_stds
+        Per-channel standard deviations, used to report MSE as a fraction of
+        variance.
+    kl_warmup
+        Linearly ramp ``kl_weight`` over the first few epochs.
+    checkpoint_dir
+        Directory to save/resume checkpoints; resumes automatically if a
+        checkpoint is present.
+    """
     with TemporaryDirectory() as tempdir:
         best_model_params_paths = [
             os.path.join(tempdir, f"best_model_params_{i}.pt")
@@ -243,6 +302,7 @@ def full_training(models : list[nn.Module],
             model.load_state_dict(torch.load(best_path, weights_only=True)) # load best model states
 
 def train_test_split(P, generator, breakdown=[0.8,0.2]):
+    """Split a PatchCollection into train/validation subsets, enabling augmentation."""
     P.pytorch_mode()
     P.augmentation_on()
     return torch.utils.data.random_split(P, breakdown, generator=generator)
@@ -251,6 +311,36 @@ def train(models, P, kl_weight=1e-5, kl_warmup=True,
           batch_size=256, n_epochs=20, lr=1e-3, gamma=0.9,
           plot_reconstructions=False, on_epoch_end=None, seed=0, deterministic=False,
           checkpoint_dir=None):
+    """
+    Train the model ensemble on a single PatchCollection.
+
+    Each model is trained as a VAE on an 80/20 train/validation split, keeping
+    the weights from its best-scoring epoch. For the standard two-phase workflow
+    use `fit` instead.
+
+    Parameters
+    ----------
+    models
+        Ensemble from `cVAE`; trained in place.
+    P
+        Patches to train on.
+    kl_weight
+        Weight on the KL term of the VAE loss.
+    kl_warmup
+        Linearly ramp `kl_weight` over the first few epochs.
+    gamma
+        Per-epoch exponential learning-rate decay factor.
+    on_epoch_end
+        Optional callback invoked after each epoch.
+    checkpoint_dir
+        Directory to save/resume checkpoints; resumes automatically if a
+        checkpoint is present.
+
+    Returns
+    -------
+    LossLogger
+        Per-model loss history.
+    """
     if seed is not None:
         set_seed(seed, deterministic=deterministic)
     g = torch.Generator(device=torch.get_default_device())
@@ -275,6 +365,27 @@ def train(models, P, kl_weight=1e-5, kl_warmup=True,
     return log
 
 def fit(models, P, Pdense, n_epochs_all=10, n_epochs_dense=20, checkpoint_dir=None, **train_kwargs):
+    """
+    Train the ensemble in two phases: all patches, then denser patches.
+
+    A short first phase over all patches (`P`) is followed by a longer phase
+    that refines on tissue-rich patches (`Pdense`, from ``P.refined``). Extra
+    keyword arguments are forwarded to `train`.
+
+    Parameters
+    ----------
+    models
+        Ensemble from `cVAE`; trained in place.
+    P, Pdense
+        Full and refined patch collections for phase 1 and phase 2.
+    n_epochs_all, n_epochs_dense
+        Number of epochs in each phase.
+
+    Returns
+    -------
+    tuple
+        The two phases' LossLogger objects.
+    """
     log1 = train(models, P, n_epochs=n_epochs_all,
                  checkpoint_dir=os.path.join(checkpoint_dir, 'phase_1') if checkpoint_dir else None,
                  **train_kwargs)

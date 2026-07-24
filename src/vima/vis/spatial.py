@@ -9,6 +9,20 @@ pb = lambda x: tqdm(x, ncols=100)
 
 
 def plot_sample_with_patches(s, marker, patchmeta, remove_margin=False, ax=None, show=True, **kwargs):
+    """
+    Show one marker of one sample with its selected patches outlined.
+
+    Parameters
+    ----------
+    s
+        Sample DataArray of shape ``(y, x, marker)``.
+    marker
+        Marker to display.
+    patchmeta
+        Patch metadata; patches belonging to this sample are outlined.
+    remove_margin
+        Crop to a margin around the outlined patches.
+    """
     if ax is None: ax = plt.gca()
 
     inpatches = vds.union_patches_in_sample(patchmeta, s).astype(np.uint8)
@@ -40,6 +54,18 @@ def plot_sample_with_patches(s, marker, patchmeta, remove_margin=False, ax=None,
 
 
 def plot_samples_with_patches(samples, marker, patchmeta, ncols=5, **kwargs):
+    """
+    Grid of `plot_sample_with_patches`, one subplot per sample.
+
+    Parameters
+    ----------
+    samples
+        Iterable of sample DataArrays.
+    marker
+        Marker to display.
+    patchmeta
+        Patch metadata; patches are outlined on their sample.
+    """
     nrows = int(np.ceil(len(samples) / ncols))
     fig, axs = plt.subplots(nrows, ncols, figsize=(3*ncols, 3*nrows))
     for ax, s in pb(zip(axs.flatten(), samples)):
@@ -50,6 +76,12 @@ def plot_samples_with_patches(samples, marker, patchmeta, ncols=5, **kwargs):
 
 
 def plot_npatches_per_sample(samples, patchmeta):
+    """
+    Bar plot of the number of patches per sample.
+
+    Samples in `samples` with no patches in `patchmeta` are shown with a count
+    of zero.
+    """
     res = patchmeta.sid.value_counts()
     empty = [sid for sid in samples.keys() if sid not in patchmeta.sid.unique()]
     for sid in empty:
@@ -79,6 +111,29 @@ def _adjust_resolution(mypatches):
 
 def spatialplot(patchmeta, values, sids=None, cmap='viridis', vmin=None, vmax=None,
                 ncols=5, size=3, empty_color='black', show=True):
+    """
+    Plot a per-patch value in space, one subplot per sample.
+
+    Each patch is drawn at its spatial location and colored by `values`.
+
+    Parameters
+    ----------
+    patchmeta
+        Patch metadata with 'sid', 'x', 'y', 'patchsize' (e.g. ``D.obs``).
+    values
+        Per-patch values indexed like `patchmeta`.
+    sids
+        Sample IDs to plot, in order; defaults to all present.
+    vmin, vmax
+        Color limits; default to the 5th/95th percentiles of `values`.
+    empty_color
+        Color for locations with no patch.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure, which `annotate_spatialplot` can draw onto.
+    """
     import copy
     if sids is None:
         sids = list(patchmeta.sid.unique())
@@ -137,6 +192,20 @@ def spatialplot(patchmeta, values, sids=None, cmap='viridis', vmin=None, vmax=No
 
 
 def annotate_spatialplot(patchmeta, highlight, color, thickness=3, show=True, fig=None):
+    """
+    Outline a subset of patches on an existing `spatialplot`.
+
+    Parameters
+    ----------
+    patchmeta
+        Patch metadata matching the figure being annotated.
+    highlight
+        Boolean Series over patches selecting which to outline.
+    color
+        Outline color.
+    fig
+        Figure returned by `spatialplot`; defaults to the current figure.
+    """
     if fig is None:
         fig = plt.gcf()
     sid_to_ax = fig._vima_sid_to_ax
