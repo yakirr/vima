@@ -28,6 +28,7 @@ def plot_association(D, key='mncoef', fdr_thresh=0.1, ax=None, show=True, **kwar
     if (D.obs._sig != 0).sum() > 0:
         sc.pl.umap(D[D.obs._sig != 0], color='_sig', cmap='seismic', vmin=-1, vmax=1,
                ax=ax, title=f'{(D.obs._sig != 0).sum()} microniches at FDR {fdr_thresh*100:.0f}%',
+               frameon=False,
                show=False, **kwargs)
     else:
         plt.title(f'No significant microniches at FDR {fdr_thresh*100:.0f}%')

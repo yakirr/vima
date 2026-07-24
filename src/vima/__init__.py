@@ -8,6 +8,7 @@ from . import models
 
 from .data.patchcollection import PatchCollection
 from .data.samples import read_samples, reindex_by_sid
+from .data.download import download_zenodo
 from .train.training import train, fit, set_seed
 from .cc import latentreps, association, compute_mams
 from .fingerprints import Fingerprints
@@ -15,6 +16,6 @@ from .patchfeatures import cell_type_counts, expression_profiles, test_features
 
 __all__ = ['settings', 'Verbosity',
            'd', 'cc', 't', 'pp', 'v', 'models',
-           'PatchCollection', 'read_samples', 'reindex_by_sid',
+           'PatchCollection', 'read_samples', 'reindex_by_sid', 'download_zenodo',
            'train', 'fit', 'set_seed', 'latentreps', 'association', 'compute_mams',
            'Fingerprints', 'cc', 'cell_type_counts', 'expression_profiles', 'test_features']
