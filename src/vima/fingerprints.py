@@ -4,7 +4,6 @@ import anndata as ad
 import scanpy as sc
 import scipy.sparse as sp
 import cna
-import copy
 from ._settings import settings, logger
 
 
@@ -78,11 +77,15 @@ class Fingerprints:
         return Fingerprints(self._adata[key].copy())
 
     def select_model(self, i):
-        """Return model `i`'s embedding and neighbor graph as an AnnData."""
-        d = ad.AnnData(X=self._adata.obsm[f'X_{i}'], obs=self._adata.obs.copy())
+        """
+        Return model `i`'s embedding and neighbor graph as an AnnData. Does not
+        make copies of the underlying data, so modifications may affect the
+        original Fingerprints object as well.
+        """
+        d = ad.AnnData(X=self._adata.obsm[f'X_{i}'], obs=self._adata.obs)
         d.obsp['connectivities'] = self._adata.obsp[f'connectivities_{i}']
         d.obsp['distances'] = self._adata.obsp[f'distances_{i}']
-        d.obsm = copy.deepcopy(self._adata.obsm)
+        d.obsm = dict(self.obsm.items())
         d.uns['neighbors'] = self._adata.uns[f'neighbors_{i}']
         return d
 

@@ -118,6 +118,17 @@ class Settings:
     def __init__(self):
         # Attach a single stdout handler and keep our records off the root
         # logger so vima's output is independent of any host logging config.
+        # The "vima" logger is a process-global singleton that survives module
+        # reloads, so clear any handler we previously attached before adding a
+        # new one; otherwise re-importing vima (e.g. importlib.reload in a
+        # notebook) accumulates handlers and every message prints N times.
+        # Match by class *name*, not isinstance: each reload defines a fresh
+        # _TqdmLoggingHandler class, so handlers left by earlier reloads are
+        # instances of a different (stale) class object and would fail an
+        # isinstance check against the current class.
+        for h in list(logger.handlers):
+            if type(h).__name__ == "_TqdmLoggingHandler":
+                logger.removeHandler(h)
         handler = _TqdmLoggingHandler(sys.stdout)
         handler.setFormatter(_ColorFormatter("%(message)s"))
         logger.addHandler(handler)

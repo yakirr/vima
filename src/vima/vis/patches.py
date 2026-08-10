@@ -360,7 +360,7 @@ def show_patches_composite(patchmeta, markers, directory, samples=None,
 
 def show_patches_cells(patchmeta, cells, x_col, y_col, celltype_col,
                        pixelsize_microns, nx=5, ny=5, sid_col='sid',
-                       colors=None, seed=None, s=8, show=True, subfig=None,
+                       colors=None, seed=None, s=8, alpha=1, show=True, subfig=None,
                        include_only=None):
     """
     Show a grid of random patches with their segmented cells as colored dots.
@@ -428,7 +428,7 @@ def show_patches_cells(patchmeta, cells, x_col, y_col, celltype_col,
 
         for ct, grp in patch_cells.groupby(celltype_col, observed=True):
             ax.scatter(grp[x_col], grp[y_col],
-                       c=[colors.get(ct, 'gray')], s=s, linewidths=0)
+                       c=[colors.get(ct, 'gray')], s=s, alpha=alpha, linewidths=0)
 
     handles = [mpatches.Patch(facecolor=colors.get(ct, 'gray'), label=ct)
                for ct in all_types]

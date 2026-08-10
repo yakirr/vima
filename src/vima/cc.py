@@ -1,4 +1,4 @@
-import os
+import os, gc
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import scanpy as sc
@@ -301,9 +301,7 @@ def _association(MAMresid, M, y, batches, donorids, rng, Nnull=10_000,
     res = {'p':p, 'mncorrs':mncorrs_meta, 'fdrs':fdrs,
             'globalstat':globalstat, 'nullglobalstats':nullglobalstats,
             'weights':weights,
-            'nullmncorrs':nullmncorrs_meta,
             'permodel_mncorrs':mncorrs,
-            'MAMres':MAMresid,
             'ycond':ycond
             }
 
@@ -417,7 +415,7 @@ def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_add
     kept = np.logical_and.reduce(kepts)
 
     for i in range(len(MAMs_filtered)):
-        MAMs_filtered[i] = MAMs_filtered[i][ds.obs.index[kept]]
+        MAMs_filtered[i] = MAMs_filtered[i].iloc[:,kept]
 
     # residualize NAMs
     MAMs_concat = pd.concat(MAMs_filtered, axis=1)
@@ -444,6 +442,7 @@ def association(ds, y, sid_name, batches=None, covs=None, donorids=None, key_add
         **kwargs)
     res.__dict__.update(vars(res_)) # add info from from res_ to res
     res.kept = kept
+    gc.collect()
     
     # make anndata with results
     D = ds.weighted_avg_graph(res.weights, kept, make_umap=make_umap)
