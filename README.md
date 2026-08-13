@@ -16,4 +16,4 @@ To see how to apply `vima` to a stain-based modality like CODEX, immunohistochem
 ## citation
 If you use `vima`, please cite:
 
-[Y. Reshef, et al. Powerful and accurate case-control analysis of spatial molecular data. bioRxiv. https://doi.org/10.1101/2025.02.07.637149v1](https://www.biorxiv.org/content/10.1101/2025.02.07.637149v2).
+[Y. Reshef, et al. Powerful and accurate case-control analysis of spatial molecular data. bioRxiv (In press at _Nature Methods_). https://doi.org/10.1101/2025.02.07.637149v1](https://www.biorxiv.org/content/10.1101/2025.02.07.637149v2).
