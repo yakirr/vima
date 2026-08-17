@@ -173,17 +173,33 @@ def pca_metapixels(mps, k):
     Returns
     -------
     tuple
-        ``(loadings, C, allmp)``: the gene-by-component loading matrix, the
-        feature correlation matrix, and the standardized metapixel AnnData.
+        ``(loadings, allmp)``: the gene-by-component loading matrix and the
+        standardized metapixel AnnData.
     """
     logger.info('merging and standardizing metapixels')
-    allmp = pd.concat(mps)
-    allmp -= allmp.values.mean(axis=0, dtype=np.float64)
-    allmp /= allmp.values.std(axis=0, dtype=np.float64)
-    allmp = allmp.fillna(0)
-    allmp.index = np.arange(len(allmp)).astype(str)
-    allmp = ad.AnnData(X=allmp)
-    C = np.corrcoef(allmp.X[::max(1,(len(allmp)//50000))].T)
+    mps = list(mps)
+    markers = mps[0].columns
+    n = sum(len(mp) for mp in mps)
+
+    # merge into one preallocated float32 matrix and standardize it in place,
+    # accumulating the moments in float64. Doing this in pandas instead upcasts
+    # the whole matrix to float64 and copies it once per operation, which at
+    # these sizes costs more than the PCA itself.
+    allmp = np.empty((n, len(markers)), np.float32)
+    i = 0
+    for mp in mps:
+        allmp[i:i+len(mp)] = mp.to_numpy(np.float32, copy=False)
+        i += len(mp)
+    del mps
+
+    allmp -= (allmp.sum(axis=0, dtype=np.float64) / n).astype(np.float32)
+    stds = np.sqrt(np.einsum('ij,ij->j', allmp, allmp, dtype=np.float64) / n)
+    stds[stds == 0] = 1  # constant features stay exactly 0, as the old fillna(0) left them
+    allmp /= stds.astype(np.float32)
+
+    allmp = ad.AnnData(X=allmp,
+                       obs=pd.DataFrame(index=np.arange(n).astype(str)),
+                       var=pd.DataFrame(index=markers))
     logger.info(f'Metapixel matrix: {allmp.shape[0]:,} pixels × {allmp.shape[1]} features')
 
     logger.info('performing PCA...')
@@ -207,7 +223,7 @@ def pca_metapixels(mps, k):
         plt.xticks(range(len(loadings.columns)), loadings.columns, rotation=90)
         settings.show('pc_loadings')
 
-    return loadings, C, allmp
+    return loadings, allmp
 
 def pca_pixels(normedpixelsdir, masksdir, pcloadings, sids):
     """
@@ -224,10 +240,14 @@ def pca_pixels(normedpixelsdir, masksdir, pcloadings, sids):
         column giving the source sample.
     """
     pcs = []
-    sid_labels = []
+    sid_codes = []
+    # project in float32: a DataFrame (or float64) right-hand side silently
+    # promotes the result, doubling both the projection cost and the size of
+    # the returned table, which has a row per pixel in the whole dataset
+    loadings = np.ascontiguousarray(np.asarray(pcloadings), dtype=np.float32)
 
     logger.info('Applying PCA projection to each sample')
-    for sid in settings.progress(sids, name='pixels -> PCA space'):
+    for code, sid in enumerate(settings.progress(sids, name='pixels -> PCA space')):
         da = xr.open_dataarray(f'{normedpixelsdir}/{sid}.nc')
         mask_da = xr.open_dataarray(f'{masksdir}/{sid}.nc')
         
@@ -247,19 +267,24 @@ def pca_pixels(normedpixelsdir, masksdir, pcloadings, sids):
         pl -= means
         pl /= stds
 
-        pl_pca = pl.dot(pcloadings)
+        pl_pca = pl.dot(loadings)
         pcs.append(pl_pca)
-        sid_labels.append(np.full(pl_pca.shape[0], sid, dtype=object))
+        sid_codes.append(np.full(pl_pca.shape[0], code, dtype=np.int32))
         del pl; gc.collect()
 
     # concatenate
     pcs = np.vstack(pcs)
-    sid_labels = np.concatenate(sid_labels)
+    sid_codes = np.concatenate(sid_codes)
 
     allpixels_pca = pd.DataFrame(
         pcs,
-        columns=[f'PC{i}' for i in range(1, pcloadings.shape[1] + 1)]
+        columns=[f'PC{i}' for i in range(1, loadings.shape[1] + 1)]
     )
-    allpixels_pca['sid'] = sid_labels
+    # categorical rather than an object column: one code per pixel instead of
+    # one pointer, over tens of millions of rows
+    # drop categories for samples that contributed no pixels, so downstream
+    # get_dummies (Harmony) never sees an all-zero batch column
+    allpixels_pca['sid'] = pd.Categorical.from_codes(
+        sid_codes, categories=list(sids)).remove_unused_categories()
 
     return allpixels_pca

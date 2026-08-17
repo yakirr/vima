@@ -149,7 +149,7 @@ def pca_pixels(outdir, repname, nmetamarkers=10, npixels_to_plot=50000,
                                                           total_n_metapixels=total_n_metapixels)
 
     # PCA the metapixels
-    loadings, C, allmp = dimreduce.pca_metapixels(metapixels.values(), nmetamarkers)
+    loadings, allmp = dimreduce.pca_metapixels(metapixels.values(), nmetamarkers)
     loadings.to_feather(f'{processeddir}/_pcloadings.feather')
     del metapixels, allmp; gc.collect()
 
