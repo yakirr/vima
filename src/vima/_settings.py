@@ -98,6 +98,32 @@ _LOGGING_LEVELS = {
 
 logger = logging.getLogger("vima")
 
+# matplotlib backends that render to a file and cannot display anything; a
+# terminal with no display falls back to "agg". Names are matched lowercase.
+# Fallback for the query below, and what matplotlib has reported for years.
+_FILE_ONLY_BACKENDS = {"agg", "cairo", "pdf", "pgf", "ps", "svg", "template"}
+
+
+def _file_only_backends():
+    """Names of the backends that can only write to a file.
+
+    Asked of matplotlib where it exposes the list (3.9+), so a backend added
+    later is picked up, with :data:`_FILE_ONLY_BACKENDS` as the fallback.
+
+    Deliberately phrased as "which backends are file-only" rather than "which
+    are interactive", even though matplotlib offers both: it classifies
+    Jupyter's inline backend as *non*-interactive, since it drives no GUI event
+    loop -- yet inline plots do appear in front of the user, which is the only
+    thing we need to know. ``resolve_backend`` would answer that question, but
+    it imports the backend module and raises on unknown names, so we avoid it.
+    """
+    try:
+        from matplotlib.backends.registry import backend_registry, BackendFilter
+
+        return set(backend_registry.list_builtin(BackendFilter.NON_INTERACTIVE))
+    except Exception:
+        return _FILE_ONLY_BACKENDS
+
 # ANSI colors: debug messages are grayed out, results are green.
 _GRAY, _GREEN, _RESET = "\033[90m", "\033[32m", "\033[0m"
 
@@ -200,19 +226,21 @@ class Settings:
     def _display_available(self):
         """Whether the active matplotlib backend can actually show a figure.
 
-        ``module://`` backends are the ones supplied by an embedding host --
-        ``matplotlib_inline`` in Jupyter, ``ipympl`` for widgets -- which draw
-        the figure into the host rather than into a window; they display fine
-        but are not in matplotlib's ``interactive_bk`` list, so they need their
-        own check. Everything else is a display only if matplotlib calls it
-        interactive; a headless terminal falls back to Agg, which is not.
+        A backend is a display unless it is one of the file-only ones (see
+        :func:`_file_only_backends`). Deciding it that way around means
+        anything unrecognized -- a third-party or future backend, or a
+        ``module://`` backend from an embedding host such as Jupyter's
+        ``matplotlib_inline`` or ``ipympl`` -- counts as a display, so the
+        worst case is plain ``plt.show()``, exactly as before this setting
+        existed.
         """
         import matplotlib
 
-        backend = matplotlib.get_backend()
-        if backend.startswith("module://"):
+        try:
+            backend = matplotlib.get_backend()
+        except Exception:  # backend resolution can fail in odd environments
             return True
-        return backend.lower() in {b.lower() for b in matplotlib.rcsetup.interactive_bk}
+        return backend.lower() not in _file_only_backends()
 
     def _saving_plots(self):
         """Whether :meth:`show` should save rather than display."""
