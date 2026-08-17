@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import scanpy as sc
+from .._settings import settings
 
 
 def plot_association(D, key='mncoef', fdr_thresh=0.1, ax=None, show=True, **kwargs):
@@ -17,6 +18,11 @@ def plot_association(D, key='mncoef', fdr_thresh=0.1, ax=None, show=True, **kwar
         Coefficient column in ``D.obs`` (with matching ``{key}_fdr``).
     fdr_thresh
         FDR cutoff for calling a microniche significant.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure that was drawn.
     """
     if ax is None:
         ax = plt.gca()
@@ -34,4 +40,5 @@ def plot_association(D, key='mncoef', fdr_thresh=0.1, ax=None, show=True, **kwar
         plt.title(f'No significant microniches at FDR {fdr_thresh*100:.0f}%')
         
     if show:
-        plt.show()
+        settings.show()
+    return ax.figure

@@ -65,9 +65,10 @@ def visualize_pixels(pixels, ntoplot, input, colorby):
         if settings.show_plots('verbose'):
             sns.scatterplot(x='PC1', y='PC2', hue=metavar, data=toplot, palette='Set1', s=1, legend=False)
             plt.title(metavar)
-            plt.show()
+            settings.show(f'pc1_pc2_by_{metavar}')
         sc.pl.umap(toplot_ad, color=metavar, legend_loc=None, frameon=False,
-                   title=f'pixels UMAPed using {input}, colored by {metavar}')
+                   title=f'pixels UMAPed using {input}, colored by {metavar}', show=False)
+        settings.show(f'pixel_umap_by_{metavar}')
         
         # print LISI ratio
         n_unique = toplot_ad.obs[metavar].nunique()
@@ -250,7 +251,7 @@ def sanity_checks(outdir, repname, npcs=1, nskip=3):
     s = da.astype(np.float32)
     da.close(); del da
     s.plot(col='marker', col_wrap=5, vmin=-10, vmax=10, cmap='seismic')
-    plt.show()
+    settings.show(f'all_pcs_{sids[0]}')
     del s
 
     logger.info('histogram of each pc')
@@ -270,7 +271,7 @@ def sanity_checks(outdir, repname, npcs=1, nskip=3):
         plt.subplot(int(np.ceil(nmms/4)), 4, i+1)
         plt.hist(harmpixels[:,i], bins=1000)
     plt.tight_layout()
-    plt.show()
+    settings.show('pc_histograms')
     del harmpixels
     gc.collect()
 
@@ -290,4 +291,4 @@ def sanity_checks(outdir, repname, npcs=1, nskip=3):
             ax.set_title(sid)
             del s; gc.collect()
         plt.tight_layout()
-        plt.show()
+        settings.show(f'pc{i}_by_sample')

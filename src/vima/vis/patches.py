@@ -30,7 +30,7 @@ def _plot_separate(patches, markers, vmin, vmax, cmap='seismic', show=True):
         axes[k, 0].set_ylabel(marker, fontsize=9)
     plt.tight_layout()
     if show:
-        plt.show()
+        settings.show()
     return fig
 
 
@@ -94,7 +94,7 @@ def _plot_composite(patches, markers, colors, vmin, vmax, features=None, nx=5, n
     if subfig is None:
         plt.tight_layout(rect=[0, 0.08, 1, 1])
     if show:
-        plt.show()
+        settings.show()
     return fig
 
 
@@ -441,5 +441,5 @@ def show_patches_cells(patchmeta, cells, x_col, y_col, celltype_col,
         plt.tight_layout(rect=[0, bottom_margin, 1, 1])
 
     if show:
-        plt.show()
+        settings.show()
     return fig

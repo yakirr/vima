@@ -91,7 +91,7 @@ def metapixels_allsamples(normedpixelsdir, masksdir, sids, total_n_metapixels):
         plt.xlabel('# non-empty pixels per metapixel')
         plt.ylabel('Frequency')
         plt.tight_layout()
-        plt.show()
+        settings.show('metapixel_occupancy_cdf')
 
     return all_metapixels, all_npixels
 
@@ -174,7 +174,7 @@ def pca_metapixels(mps, k):
         plt.imshow(loadings, cmap='seismic', vmin=-0.5, vmax=0.5)
         plt.yticks(range(len(loadings)), loadings.index)
         plt.xticks(range(len(loadings.columns)), loadings.columns, rotation=90)
-        plt.show()
+        settings.show('pc_loadings')
 
     return loadings, C, allmp
 

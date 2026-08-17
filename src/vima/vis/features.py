@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from .._settings import settings
 
 
 def _select_features(features, group_a, group_b, n_top, n_bottom, markers):
@@ -49,6 +50,11 @@ def plot_features(
         ``[label_a, label_b]`` for the legend.
     kind
         'violin' (default), 'box', or 'swarm'.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure that was drawn.
     """
     if ax is None:
         ax = plt.gca()
@@ -70,7 +76,8 @@ def plot_features(
     plot_kwargs.update(kwargs)
     plot_fn(data=df, x='marker', y='value', hue='status', order=toplot, ax=ax, **plot_kwargs)
     if show:
-        plt.show()
+        settings.show()
+    return ax.figure
 
 
 def plot_features_by_sample(
@@ -114,6 +121,11 @@ def plot_features_by_sample(
         ``[label_a, label_b]`` for the legend.
     connect
         Draw lines linking each sample's two group means.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure that was drawn.
     """
     if ax is None:
         ax = plt.gca()
@@ -147,4 +159,5 @@ def plot_features_by_sample(
                         color='gray', alpha=0.4, lw=0.8, zorder=0)
 
     if show:
-        plt.show()
+        settings.show()
+    return ax.figure

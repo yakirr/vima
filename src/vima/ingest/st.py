@@ -115,7 +115,8 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
                 hvgs = hvgs + list(set(genes_to_add) & set(pl.var_names))
                 
                 if settings.show_plots():
-                    sc.pl.highly_variable_genes(pl, log=True, show=True)
+                    sc.pl.highly_variable_genes(pl, log=True, show=False)
+                    settings.show(f'hvgs_{sid}')
 
                 if settings.show_plots('verbose'):
                     top8 = (
@@ -144,7 +145,7 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
                         ax.set_aspect('equal')
                         ax.axis('off')
                     plt.tight_layout()
-                    plt.show()
+                    settings.show(f'top_hvgs_{sid}')
                     plt.close(fig)
 
                 union_hvgs.update(hvgs)
@@ -220,7 +221,8 @@ def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel
     pl = pl[(pl[markers].sum(axis=1) >= min_ntranscripts_per_pixel) ]#& (pl[list(set(markers) & set(genes))].sum(axis=1) > 0)]
     if settings.show_plots():
         plt.scatter(pl.pixel_x, pl.pixel_y, c=pl[markers].sum(axis=1), s=0.1, alpha=0.8, vmin=0, vmax=100)
-        plt.gca().set_aspect('equal'); plt.title('transcript density (gray = failed qc)'); plt.axis('off'); plt.show()
+        plt.gca().set_aspect('equal'); plt.title('transcript density (gray = failed qc)'); plt.axis('off')
+        settings.show(f'transcript_density_{sid}')
     logger.info(f'\t{len(pl)} pixels after QC.')
 
     logger.info('\tLog-normalizing...')

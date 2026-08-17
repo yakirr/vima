@@ -4,6 +4,7 @@ import time
 import matplotlib.pyplot as plt
 from IPython import display
 from .. import vis as v
+from .._settings import settings
 
 class LossLogger:
     """Accumulate and report per-model training/validation losses; returned by `train`."""
@@ -118,7 +119,9 @@ class LossLogger:
         plt.title('Reconstruction error across validation patches')
         plt.xlabel('Reconstruction error'); plt.ylabel('#Patches')
         plt.gca().spines[['top', 'right']].set_visible(False)
-        plt.show()
+        # Redrawn every epoch, so keep overwriting one file rather than
+        # accumulating one per epoch.
+        settings.show('training_progress', overwrite=True)
 
         if self.detailed:
             ix = np.argsort(vrlosses)

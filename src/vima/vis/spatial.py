@@ -20,6 +20,11 @@ def plot_sample_with_patches(s, marker, patchmeta, remove_margin=False, ax=None,
         Patch metadata; patches belonging to this sample are outlined.
     remove_margin
         Crop to a margin around the outlined patches.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure that was drawn.
     """
     if ax is None: ax = plt.gca()
 
@@ -48,7 +53,8 @@ def plot_sample_with_patches(s, marker, patchmeta, remove_margin=False, ax=None,
     ax.set_ylim(y_max, y_min)
 
     if show:
-        plt.show()
+        settings.show()
+    return ax.figure
 
 
 def plot_samples_with_patches(samples, marker, patchmeta, ncols=5, **kwargs):
@@ -63,6 +69,11 @@ def plot_samples_with_patches(samples, marker, patchmeta, ncols=5, **kwargs):
         Marker to display.
     patchmeta
         Patch metadata; patches are outlined on their sample.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure that was drawn.
     """
     nrows = int(np.ceil(len(samples) / ncols))
     fig, axs = plt.subplots(nrows, ncols, figsize=(3*ncols, 3*nrows))
@@ -70,7 +81,8 @@ def plot_samples_with_patches(samples, marker, patchmeta, ncols=5, **kwargs):
         plot_sample_with_patches(s, marker, patchmeta, ax=ax, show=False, **kwargs)
         ax.set_title(s.sid)
     fig.tight_layout()
-    fig.show()
+    settings.show(fig=fig)
+    return fig
 
 
 def plot_npatches_per_sample(samples, patchmeta):
@@ -79,17 +91,23 @@ def plot_npatches_per_sample(samples, patchmeta):
 
     Samples in `samples` with no patches in `patchmeta` are shown with a count
     of zero.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure that was drawn.
     """
     res = patchmeta.sid.value_counts()
     empty = [sid for sid in samples.keys() if sid not in patchmeta.sid.unique()]
     for sid in empty:
         res.loc[sid] = 0
 
-    plt.figure(figsize=(15,2))
+    fig = plt.figure(figsize=(15,2))
     plt.bar(x=res.index, height=res)
     plt.tick_params(axis='x', rotation=90)
     plt.gca().spines[['top', 'right']].set_visible(False)
-    plt.show()
+    settings.show()
+    return fig
 
 
 def _adjust_resolution(mypatches):
@@ -185,7 +203,7 @@ def spatialplot(patchmeta, values, sids=None, cmap='viridis', vmin=None, vmax=No
     fig._vima_sid_to_ax = sid_to_ax
     fig.tight_layout()
     if show:
-        plt.show()
+        settings.show()
     return fig
 
 
@@ -205,7 +223,7 @@ def annotate_spatialplot(patchmeta, highlight, color, thickness=3, show=True, fi
         Figure returned by `spatialplot`; defaults to the current figure.
     """
     if fig is None:
-        fig = plt.gcf()
+        fig = settings.current_figure()
     sid_to_ax = fig._vima_sid_to_ax
     for sid, ax in sid_to_ax.items():
         mypatches = patchmeta[patchmeta.sid == sid]
@@ -234,5 +252,5 @@ def annotate_spatialplot(patchmeta, highlight, color, thickness=3, show=True, fi
             ax.plot(np.append(cnt[:, 0], cnt[0, 0]), np.append(cnt[:, 1], cnt[0, 1]), color=color, linewidth=thickness)
 
     if show:
-        plt.show()
+        settings.show(fig=fig)
     return fig

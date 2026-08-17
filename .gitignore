@@ -189,3 +189,6 @@ demo/data/ST/association_results.h5ad
 
 # machine-local test data + generated golden reference
 tests/_testingdata/
+
+# plots auto-saved by vima when running without a display
+figs/

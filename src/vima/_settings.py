@@ -30,6 +30,19 @@ Three independent knobs:
   to verbosity (bars stay on even at ``"minimal"``); set ``False`` for batch or
   cluster runs.
 
+Plots that *are* drawn go through ``settings.show()``, which displays them when a
+display is available and otherwise saves them as PNGs. This matters on a cluster:
+with no display matplotlib falls back to the Agg backend, where ``plt.show()``
+silently discards the figure and leaves it open, so the plots are lost and the
+figures accumulate. Two knobs control the saving:
+
+* ``settings.save_plots`` -- ``"auto"`` (default) saves only when no display is
+  available, so notebooks are unaffected; ``True`` always saves (never displays),
+  ``False`` never saves.
+* ``settings.plot_dir`` -- directory for saved plots, created on demand; defaults
+  to ``"figs"``. Set to ``None`` to discard plots instead (a warning is issued
+  once).
+
 Guidelines for package code:
 
 * ``logger.info(...)``  -- normal progress messages (visible at ``default``).
@@ -39,8 +52,12 @@ Guidelines for package code:
 * ``settings.progress(iterable, name=...)`` -- wrap any loop needing a bar.
 * ``if settings.show_plots(...):`` -- guard a diagnostic plot. Pass ``"verbose"``
   for the detailed plots; the default level guards the standard ones.
+* ``settings.show(name)`` -- finish a figure. Never call ``plt.show()`` directly:
+  that displays or discards, with no way to save.
 """
 
+import os
+import re
 import sys
 import logging
 from enum import IntEnum
@@ -135,6 +152,12 @@ class Settings:
         logger.propagate = False
 
         self.progress_bars = True
+        self.plot_dir = "figs"
+        self.save_plots = "auto"
+        self._plot_count = 0
+        self._last_figure = None
+        self._warned_plots_discarded = False
+        self._warned_save_failed = False
         self._verbosity = None
         # ``diagnostic_plots`` tracks ``verbosity`` until the user sets it.
         self._diagnostic_plots = None
@@ -173,6 +196,109 @@ class Settings:
         standard-plot level); pass ``"verbose"`` for the more detailed plots.
         """
         return self._diagnostic_plots >= Verbosity.parse(level)
+
+    def _display_available(self):
+        """Whether the active matplotlib backend can actually show a figure.
+
+        ``module://`` backends are the ones supplied by an embedding host --
+        ``matplotlib_inline`` in Jupyter, ``ipympl`` for widgets -- which draw
+        the figure into the host rather than into a window; they display fine
+        but are not in matplotlib's ``interactive_bk`` list, so they need their
+        own check. Everything else is a display only if matplotlib calls it
+        interactive; a headless terminal falls back to Agg, which is not.
+        """
+        import matplotlib
+
+        backend = matplotlib.get_backend()
+        if backend.startswith("module://"):
+            return True
+        return backend.lower() in {b.lower() for b in matplotlib.rcsetup.interactive_bk}
+
+    def _saving_plots(self):
+        """Whether :meth:`show` should save rather than display."""
+        if self.save_plots == "auto":
+            return not self._display_available()
+        return bool(self.save_plots)
+
+    def show(self, name=None, fig=None, overwrite=False):
+        """Display the current figure, or save it when there is no display.
+
+        Central replacement for ``plt.show()`` in package code. With a display
+        available this is exactly ``plt.show()``. Without one -- a plain
+        terminal on a cluster, where ``plt.show()`` silently discards the
+        figure *and* leaves it open, so figures pile up -- the figure is
+        written to ``settings.plot_dir`` as a PNG and closed.
+
+        ``name`` labels the file, defaulting to the name of the calling
+        function. Files are numbered in the order they are produced, so a run's
+        plots sort chronologically; pass ``overwrite=True`` to use ``name``
+        alone as the filename and replace the file on every call (for a plot
+        redrawn repeatedly, like the per-epoch training summary). ``fig`` is the
+        figure to save, defaulting to the current one -- pass it explicitly when
+        drawing onto a figure that an earlier :meth:`show` may already have
+        closed, since ``plt.gcf()`` would then hand back a blank one.
+
+        Returns the path written, or ``None`` if the figure was displayed or
+        discarded.
+        """
+        import matplotlib.pyplot as plt
+
+        if fig is None:
+            fig = plt.gcf()
+        self._last_figure = fig
+
+        if not self._saving_plots():
+            plt.show()
+            return None
+
+        if self.plot_dir is None:
+            if not self._warned_plots_discarded:
+                logger.warning(
+                    "no display available and vima.settings.plot_dir is None, so "
+                    "plots are being discarded; set vima.settings.plot_dir to save "
+                    "them as images instead"
+                )
+                self._warned_plots_discarded = True
+            plt.close(fig)
+            return None
+
+        if name is None:
+            name = sys._getframe(1).f_code.co_name
+        name = re.sub(r"[^0-9a-zA-Z]+", "_", str(name)).strip("_").lower() or "plot"
+        if overwrite:
+            filename = f"{name}.png"
+        else:
+            self._plot_count += 1
+            filename = f"{self._plot_count:03d}_{name}.png"
+
+        path = os.path.join(self.plot_dir, filename)
+        try:
+            os.makedirs(self.plot_dir, exist_ok=True)
+            fig.savefig(path, dpi=150, bbox_inches="tight")
+        except OSError as e:
+            # A diagnostic plot is never worth aborting a long run for.
+            if not self._warned_save_failed:
+                logger.warning(f"could not save plot to {path}: {e}")
+                self._warned_save_failed = True
+            plt.close(fig)
+            return None
+        plt.close(fig)
+        logger.info(f"saved plot to {path}")
+        return path
+
+    def current_figure(self):
+        """The figure a follow-up call should draw on.
+
+        Normally ``plt.gcf()``. When plots are being saved instead of shown,
+        :meth:`show` closes each figure, so ``plt.gcf()`` would hand back a
+        fresh blank one; with no figure open, return the last figure
+        :meth:`show` handled instead.
+        """
+        import matplotlib.pyplot as plt
+
+        if not plt.get_fignums() and self._last_figure is not None:
+            return self._last_figure
+        return plt.gcf()
 
     def progress(self, iterable=None, name=None, total=None, ncols=100, desc=None, **kwargs):
         """tqdm wrapper honoring ``settings.progress_bars``.

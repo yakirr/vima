@@ -4,6 +4,7 @@ import torch
 import scanpy as sc
 from scipy.optimize import linear_sum_assignment
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
+from .._settings import settings
 
 
 def scaler(minimum=0, maximum=255):
@@ -52,7 +53,8 @@ def plot_with_reconstruction(model, examples, show=True, channels=[0,1,2], pmin=
 
     if show:
         plt.tight_layout()
-        plt.show()
+        settings.show()
+    return fig
 
 
 def plot_patches_separatechannels(examples, choose=None, vmax=10, vmin=None, channels=[0,1,2], channelnames=None):
@@ -74,7 +76,8 @@ def plot_patches_separatechannels(examples, choose=None, vmax=10, vmin=None, cha
                 plt.gca().text(-5, 20, channelnames[j], va='center', ha='right', rotation=90)
 
     plt.tight_layout()
-    plt.show()
+    settings.show()
+    return fig
 
 
 # colormaps consists of tuples of the form [channel, color, scaler]
@@ -83,8 +86,6 @@ def plot_patches_overlaychannels(examples, colormaps, nx=5, ny=5, show=True, see
         if seed is not None: np.random.seed(seed)
         ix = np.random.choice(range(len(examples)), size=nx*ny, replace=False)
         examples = examples[ix]
-    else:
-        ix = range(len(examples))
 
     images = apply_colormap(examples, colormaps)
 
@@ -95,8 +96,8 @@ def plot_patches_overlaychannels(examples, colormaps, nx=5, ny=5, show=True, see
         plt.axis('off')
     plt.tight_layout()
     if show:
-        plt.show()
-    return ix
+        settings.show()
+    return fig
 
 
 def plot_patches_overlaychannels_linsum(patches, latents, colormaps, nx=5, ny=5, show=True, seed=None,
@@ -144,9 +145,8 @@ def plot_patches_overlaychannels_linsum(patches, latents, colormaps, nx=5, ny=5,
         axs[-1,-1].add_artist(scalebar)
 
     if show:
-        plt.show()
-    else:
-        return fig
+        settings.show()
+    return fig
 
 
 def plot_patches_overlaychannels_sorted(examples, colormaps, labels=None, nx=5, ny=5, show=True):
@@ -161,7 +161,8 @@ def plot_patches_overlaychannels_sorted(examples, colormaps, labels=None, nx=5, 
         plt.axis('off')
     plt.tight_layout()
     if show:
-        plt.show()
+        settings.show()
+    return fig
 
 
 # each color channel should be a tuple of the form (channel, scaler)
@@ -178,4 +179,4 @@ def plot_patches_fourcolors(examples, nx=5, ny=5,
     if yellow[0] is not None:
         colormaps.append([yellow[0], [1,1,0], yellow[1]])
 
-    plot_patches_overlaychannels(examples, colormaps, nx=nx, ny=ny, show=show)
+    return plot_patches_overlaychannels(examples, colormaps, nx=nx, ny=ny, show=show)
