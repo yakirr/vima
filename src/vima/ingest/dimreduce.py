@@ -16,10 +16,10 @@ def metapixels_allsamples(normedpixelsdir, masksdir, sids, total_n_metapixels):
     """
     Pool metapixels across all samples for a more robust PCA fit.
 
-    Loads each sample's normalized pixels, standardizes them with the stored
-    per-marker means/stds, builds metapixels, and randomly downsamples each
-    sample to roughly ``total_n_metapixels // len(sids)`` metapixels. Warns if a
-    sample's markers differ from the first sample's.
+    Loads each sample's normalized pixels, builds roughly
+    ``total_n_metapixels // len(sids)`` randomly chosen metapixels from it, and
+    standardizes them with the stored per-marker means/stds. Warns if a sample's
+    markers differ from the first sample's.
 
     Parameters
     ----------
@@ -55,7 +55,7 @@ def metapixels_allsamples(normedpixelsdir, masksdir, sids, total_n_metapixels):
     for i, sid in enumerate(settings.progress(sids, name='creating metapixels')):
         da = xr.open_dataarray(f'{normedpixelsdir}/{sid}.nc')
         mask_da = xr.open_dataarray(f'{masksdir}/{sid}.nc')
-        
+
         # ensure same markers in same order in all files
         markers = list(da.marker.values)
         if ref_markers is None:
@@ -68,18 +68,21 @@ def metapixels_allsamples(normedpixelsdir, masksdir, sids, total_n_metapixels):
                       f'{len(missing)} missing, {len(extra)} extra vs {ref_sid}')
             logger.warning(f'{sid} has different markers ({len(markers)}) '
                            f'than {ref_sid} ({len(ref_markers)}): {detail}')
-        
-        means = xr.DataArray(da.attrs['means'], dims='marker')
-        stds = xr.DataArray(da.attrs['stds'], dims='marker')
-        da = ((da - means) / stds).where(mask_da, 0)
 
-        all_metapixels[sid], all_npixels[sid] = metapixels(da, mask_da)
+        means, stds = da.attrs['means'], da.attrs['stds']
+
+        # metapixels are built from the un-standardized pixels and standardized
+        # afterward: averaging over a window and the affine (x-mean)/std commute,
+        # so this is identical to standardizing the full array first but avoids
+        # materializing several (y, x, marker)-sized temporaries.
+        mp, all_npixels[sid] = metapixels(da, mask_da, n_metapixels=nmp_per_sample)
         da.close(); mask_da.close()
         del da, mask_da
-        if len(all_metapixels[sid]) > nmp_per_sample:
-            ix = np.random.choice(len(all_metapixels[sid]), nmp_per_sample, replace=False)
-            all_metapixels[sid] = all_metapixels[sid].iloc[ix]
-            all_npixels[sid] = all_npixels[sid][ix]
+
+        mp -= means
+        mp /= stds
+        all_metapixels[sid] = pd.DataFrame(data=mp, columns=markers)
+        del mp
 
         # visualize distribution of num non-empty pixels per metapixel in this sample
         if settings.show_plots():
@@ -95,33 +98,61 @@ def metapixels_allsamples(normedpixelsdir, masksdir, sids, total_n_metapixels):
 
     return all_metapixels, all_npixels
 
-def metapixels(s, mask, npixels_thresh=0):
+def metapixels(s, mask, npixels_thresh=0, n_metapixels=None, window=5):
     """
     Pool each pixel with its neighbors into a metapixel.
 
-    Sums each marker over a 5x5 window centered on every pixel and divides by
-    the number of non-empty (masked) pixels contributing to that window, so each
+    Averages each marker over a ``window``-by-``window`` window centered on a
+    pixel, using only the non-empty (masked) pixels in that window, so each
     metapixel is the average over its non-empty neighbors. Metapixels with at
     most ``npixels_thresh`` contributing pixels are dropped.
+
+    Parameters
+    ----------
+    n_metapixels
+        If given, uniformly sample at most this many metapixel centers and
+        compute only those. Since the caller typically keeps a small random
+        subset anyway, this avoids convolving the whole (y, x, marker) array,
+        which dominates the cost for large marker panels.
 
     Returns
     -------
     tuple
-        ``(metapixel_df, npixels)``: a marker-columned DataFrame of retained
-        metapixels and the per-metapixel count of contributing non-empty pixels.
+        ``(metapixels, npixels)``: a ``(metapixel, marker)`` float32 array and
+        the per-metapixel count of contributing non-empty pixels.
     """
-    markers = s.marker.values
+    mask = mask.data
+    H, W = mask.shape
 
-    # make metapixels and compute how many non-empty pixels and transcripts are in each metapixel
-    kernel = np.ones((5, 5), np.float32)
-    mp = convolve(s.data, kernel[:, :, None], mode="constant")
-    npixels = convolve(mask.data.astype('float32'), kernel, mode="constant")
+    # how many non-empty pixels contribute to each candidate metapixel (cheap: 2D only)
+    kernel = np.ones((window, window), np.float32)
+    npixels = convolve(mask.astype(np.float32), kernel, mode="constant")
 
-    # filter out metapixels with few non-empty pixels
-    metapixels_mask = npixels > npixels_thresh
+    # pick the metapixel centers, sampling before doing any work over markers
+    centers = np.flatnonzero(npixels.ravel() > npixels_thresh)
+    if n_metapixels is not None and len(centers) > n_metapixels:
+        centers = centers[np.random.choice(len(centers), n_metapixels, replace=False)]
+    npixels = npixels.ravel()[centers]
+
+    # sum each window by gathering its non-empty pixels, one neighbor offset at a time
+    data = s.data.reshape(H * W, -1)
+    mask = mask.ravel()
+    r, c = np.divmod(centers, W)
+    mp = np.zeros((len(centers), data.shape[1]), np.float32)
+    rad = window // 2
+    for dr in range(-rad, rad + 1):
+        rr = r + dr
+        for dc in range(-rad, rad + 1):
+            cc = c + dc
+            neighbor = rr * W + cc
+            contributes = (rr >= 0) & (rr < H) & (cc >= 0) & (cc < W)
+            contributes &= mask[np.where(contributes, neighbor, 0)]
+            i = np.flatnonzero(contributes)
+            mp[i] += data[neighbor[i]]
 
     # divide each metapixel by the # of non-empty pixels that contributed to it and return
-    return pd.DataFrame(data=mp[metapixels_mask] / npixels[metapixels_mask][:,None], columns=markers), npixels[metapixels_mask]
+    mp /= npixels[:, None]
+    return mp, npixels
 
 # mps should be an array of dataframes containing metapixels
 def pca_metapixels(mps, k):
@@ -200,9 +231,7 @@ def pca_pixels(normedpixelsdir, masksdir, pcloadings, sids):
         da = xr.open_dataarray(f'{normedpixelsdir}/{sid}.nc')
         mask_da = xr.open_dataarray(f'{masksdir}/{sid}.nc')
         
-        means = xr.DataArray(da.attrs['means'], dims='marker')
-        stds = xr.DataArray(da.attrs['stds'], dims='marker')
-        da = ((da - means) / stds).where(mask_da, 0)
+        means, stds = da.attrs['means'], da.attrs['stds']
 
         # load raw arrays and close before dtype conversion so we never hold
         # two full (H × W × n_genes) copies simultaneously
@@ -212,6 +241,11 @@ def pca_pixels(normedpixelsdir, masksdir, pcloadings, sids):
         del da, mask_da; gc.collect()
         pl = data.astype(np.float32, copy=False)[mask]
         del data, mask; gc.collect()
+
+        # standardize the non-empty pixels only, rather than the full
+        # (y, x, marker) array; empty pixels are dropped by the mask anyway
+        pl -= means
+        pl /= stds
 
         pl_pca = pl.dot(pcloadings)
         pcs.append(pl_pca)
