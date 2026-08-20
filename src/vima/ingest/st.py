@@ -158,14 +158,7 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
 
     means_df = pd.concat([m.reindex(index=union_allgenes, fill_value=0) for m in means], axis=1)
     stds_df  = pd.concat([s.reindex(index=union_allgenes, fill_value=0) for s in stds],  axis=1)
-    w = np.array(npixels, dtype=np.float64)
-    W = w.sum()
-
-    grand_mean   = np.sum((means_df * w).values, axis=1, dtype=np.float64) / W
-    mean_of_vars = np.sum((stds_df ** 2 * w).values, axis=1, dtype=np.float64) / W
-    var_of_means = ((means_df.subtract(grand_mean, axis=0).values.astype(np.float64) ** 2) * w).sum(axis=1) / W
-    grand_mean = pd.Series(grand_mean, index=means_df.index)
-    grand_std  = pd.Series(np.sqrt(mean_of_vars + var_of_means), index=means_df.index)
+    grand_mean, grand_std = util.pool_moments(means_df, stds_df, npixels)
 
     return list(union_hvgs), grand_mean, grand_std
 

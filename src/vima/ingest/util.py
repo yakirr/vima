@@ -28,6 +28,40 @@ def write_xarray(s, fname):
     s.to_netcdf(fname, encoding={s.name: compression}, engine="netcdf4")
 
 ###########################################
+# summary statistics
+###########################################
+def pool_moments(means_df, stds_df, npixels):
+    """
+    Pool per-sample means and stds into dataset-wide moments.
+
+    Weights each sample by its number of pixels and combines the average
+    within-sample variance with the between-sample variance of the means.
+
+    Parameters
+    ----------
+    means_df, stds_df
+        Marker-by-sample DataFrames of each sample's per-marker mean and
+        standard deviation, sharing an index.
+    npixels
+        Number of pixels contributing to each sample's moments, in the same
+        order as the columns of ``means_df``.
+
+    Returns
+    -------
+    tuple
+        ``(grand_mean, grand_std)``: per-marker Series indexed like ``means_df``.
+    """
+    w = np.array(npixels, dtype=np.float64)
+    W = w.sum()
+
+    grand_mean   = np.sum((means_df * w).values, axis=1, dtype=np.float64) / W
+    mean_of_vars = np.sum((stds_df ** 2 * w).values, axis=1, dtype=np.float64) / W
+    var_of_means = ((means_df.subtract(grand_mean, axis=0).values.astype(np.float64) ** 2) * w).sum(axis=1) / W
+
+    return (pd.Series(grand_mean, index=means_df.index),
+            pd.Series(np.sqrt(mean_of_vars + var_of_means), index=means_df.index))
+
+###########################################
 # for creating raw pixel files
 ###########################################
 def transcriptlist_to_pixellist(transcriptlist, x_col, y_col, gene_col, pixel_size=10):

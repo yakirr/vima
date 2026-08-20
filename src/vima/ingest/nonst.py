@@ -1,5 +1,6 @@
 import os, glob, gc
 import numpy as np
+import pandas as pd
 import cv2 as cv2
 import xarray as xr
 from . import util
@@ -134,12 +135,14 @@ def prepare(load, filepaths, orig_pixel_size, markers, get_foreground, norm_by_b
             )
         for sid in settings.progress(sids)])
     gc.collect()
-    _, pixels = norm_by_background(pixels)
+    goodmarkers, pixels = norm_by_background(pixels)
     ntranscripts = pixels.sum(axis=1, dtype=np.float64)
     med_ntranscripts = np.median(ntranscripts)
     pixels = np.log1p(med_ntranscripts * pixels / (ntranscripts[:,None] + 1e-6)) # adding to denominator in case pixel is all 0s
-    means = pixels.mean(axis=0, dtype=np.float64)
-    stds = pixels.std(axis=0, dtype=np.float64)
+    # indexed by marker name so each sample's moments are aligned by name below,
+    # rather than positionally against whatever markers that sample kept
+    means = pd.Series(pixels.mean(axis=0, dtype=np.float64), index=goodmarkers)
+    stds = pd.Series(pixels.std(axis=0, dtype=np.float64), index=goodmarkers)
     del pixels; gc.collect()
     
     logger.info('Normalizing and writing')
@@ -153,6 +156,7 @@ def prepare(load, filepaths, orig_pixel_size, markers, get_foreground, norm_by_b
         pl = np.log1p(med_ntranscripts * pl / (pl.sum(axis=1)[:,None] + 1e-6)) # adding to denominator in case pixel is all 0s
         s = s.sel(marker=goodmarkers)
         util.set_pixels(s, mask, pl)
-        s.attrs['means'] = means.reindex(s.marker.values, fill_value=1).values.astype(np.float32)
-        s.attrs['stds'] = stds.reindex(s.marker.values, fill_value=0).values.astype(np.float32)
+        # a marker with no moments standardizes to a no-op rather than dividing by zero
+        s.attrs['means'] = means.reindex(s.marker.values, fill_value=0).values.astype(np.float32)
+        s.attrs['stds'] = stds.reindex(s.marker.values, fill_value=1).values.astype(np.float32)
         util.write_xarray(s, f'{normeddir}/{sid}.nc')
