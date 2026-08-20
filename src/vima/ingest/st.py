@@ -6,48 +6,72 @@ from matplotlib import pyplot as plt
 from . import util
 from .._settings import logger, settings
 
-def med_ntranscripts(load, filepaths, x_col, y_col, pixel_size=10):
+def rasterize_all(load, filepaths, x_col, y_col, gene_col, pixel_size=10):
+    """
+    Bin every sample's transcripts to a pixel grid, once.
+
+    Ingest makes three passes over the samples -- normalization factor, then
+    HVGs and dataset-wide moments, then the final matrices -- and each pass
+    needs the same binned counts. Binning once and holding the sparse result
+    trades memory for two fewer reads and two fewer binning passes per sample;
+    the counts are ~1-2% dense, so a 34-sample Xenium 5K cohort costs a few GB.
+
+    Returns
+    -------
+    list
+        ``(sample_id, SparsePixels)`` per file, in ``filepaths`` order.
+    """
+    rasterized = []
+    for filepath in settings.progress(filepaths, name='binning transcripts'):
+        sid, data = load(filepath)
+        pixels = util.transcriptlist_to_sparsepixels(data, x_col, y_col, gene_col,
+                                                     pixel_size=pixel_size)
+        del data; gc.collect()
+        logger.info(f'\t{sid}: {pixels.ntranscripts/1e6:.2f}M tx → '
+                    f'{len(pixels.nonempty())} non-empty pixels '
+                    f'({pixels.nbytes()/1e9:.2f} GB sparse)')
+        rasterized.append((sid, pixels))
+
+    held = sum(p.nbytes() for _, p in rasterized)
+    logger.info(f'\tHolding {held/1e9:.2f} GB of binned counts for reuse across passes.')
+    return rasterized
+
+def med_ntranscripts(rasterized):
     """
     Compute the normalization target: median transcripts per dense pixel.
 
-    Bins each sample's transcripts into ``pixel_size`` square pixels and takes
-    the median transcript count over pixels with at least 10 transcripts; returns
-    the mean of these per-sample medians, used as the total-count normalization
-    target.
+    Takes the median transcript count over pixels with at least 10 transcripts
+    in each sample, and returns the mean of those per-sample medians; this is
+    the total-count normalization target. Counts come from the same binning the
+    rest of ingest uses, so any transcript with no gene assigned is excluded.
     """
     medians = []
-    for i, filepath in enumerate(settings.progress(filepaths, name='median #transcripts')):
-        sid, df = load(filepath)
-        ntranscripts = len(df)
-
-        px = (df[x_col].to_numpy() // pixel_size).astype(np.int64)
-        py = (df[y_col].to_numpy() // pixel_size).astype(np.int64)
-        ny = int(py.max() - py.min()) + 1
-        txcount = np.bincount((px - px.min()) * ny + (py - py.min()))
-
-        med = np.median(txcount[txcount > 10])
-        logger.info(f"\tSample {i+1}/{len(filepaths)}: {sid} ({ntranscripts/1e6:.2f}M tx) "
+    for i, (sid, pixels) in enumerate(settings.progress(rasterized, name='median #transcripts')):
+        # float64 so the median (and the normalization factor built from it)
+        # carries full precision, as it did when counts were an int64 table
+        totals = np.asarray(pixels.counts.sum(axis=1), dtype=np.float64).ravel()
+        med = np.median(totals[totals > 10])
+        logger.info(f"\tSample {i+1}/{len(rasterized)}: {sid} ({pixels.ntranscripts/1e6:.2f}M tx) "
                     f"→ median {med} transcripts per pixel with >=10 transcripts")
         medians.append(med)
-        del df, px, py, txcount; gc.collect()
     return np.mean(np.array(medians))
 
-def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_genes_per_sample=200, genes_to_add=[],
-                 pixel_size=10, min_mean=0.01, min_ntranscripts_per_pixel=10, min_ngenes_per_pixel=1,
+def get_sumstats(rasterized, target_sum, n_top_genes_per_sample=200, genes_to_add=[],
+                 min_mean=0.01, min_ntranscripts_per_pixel=10, min_ngenes_per_pixel=1,
                  min_npixels=20, min_totalcounts=500):
     """
     Select highly variable genes and compute dataset-wide per-gene moments.
 
-    For each sample, rasterizes transcripts to pixels, QC-filters pixels,
-    log-normalizes to ``target_sum``, and selects the top highly variable genes;
-    the union of HVGs across samples (plus any ``genes_to_add``) is returned.
-    Also returns the pixel-count-weighted grand mean and grand std per gene
-    across the whole dataset (pooling within- and between-sample variance).
+    For each sample, QC-filters the binned pixels, log-normalizes them to
+    ``target_sum``, and selects the top highly variable genes; the union of HVGs
+    across samples (plus any ``genes_to_add``) is returned. Also returns the
+    pixel-count-weighted grand mean and grand std per gene across the whole
+    dataset (pooling within- and between-sample variance).
 
     Parameters
     ----------
-    load
-        Callable mapping a file path to ``(sample_id, transcript_dataframe)``.
+    rasterized
+        ``(sample_id, SparsePixels)`` per sample, from `rasterize_all`.
     target_sum
         Per-pixel total-count normalization target (from `med_ntranscripts`).
     n_top_genes_per_sample
@@ -69,13 +93,8 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
     stds = []
     npixels = []
 
-    for i, filepath in enumerate(settings.progress(filepaths, name='HVGs & moments')):
-        sid, transcripts = load(filepath)
-        ntranscripts = len(transcripts)
-
-        # create pixellist
-        pixels = util.transcriptlist_to_sparsepixels(transcripts, x_col, y_col, gene_col, pixel_size=pixel_size)
-        del transcripts; gc.collect()
+    for i, (sid, pixels) in enumerate(settings.progress(rasterized, name='HVGs & moments')):
+        ntranscripts = pixels.ntranscripts
 
         # filter empty/near-empty pixels; both thresholds are per-pixel, so
         # applying them together matches filtering on one and then the other
@@ -98,7 +117,7 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
         obs = pd.DataFrame({'pixel_x': pixel_x, 'pixel_y': pixel_y})
         obs.index = obs.index.astype(str)
         pl = sc.AnnData(counts, var=pd.DataFrame(index=genes), obs=obs)
-        del pixels, counts; gc.collect()
+        del counts; gc.collect()
 
         # QC genes and compute HVGs for this sample
         sc.pp.filter_genes(pl, min_cells=min_npixels, inplace=True)
@@ -154,10 +173,10 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
                     plt.close(fig)
 
                 union_hvgs.update(hvgs)
-                logger.info(f'\tSample {i+1}/{len(filepaths)}: {sid} ({ntranscripts/1e6:.2f}M tx) → {len(union_hvgs)} HVGs across all samples so far.')
+                logger.info(f'\tSample {i+1}/{len(rasterized)}: {sid} ({ntranscripts/1e6:.2f}M tx) → {len(union_hvgs)} HVGs across all samples so far.')
         else:
             union_hvgs.update(genes)
-            logger.info(f'\tSample {i+1}/{len(filepaths)}: {sid} ({ntranscripts/1e6:.2f}M tx) → Using all {len(genes)} genes.')
+            logger.info(f'\tSample {i+1}/{len(rasterized)}: {sid} ({ntranscripts/1e6:.2f}M tx) → Using all {len(genes)} genes.')
 
         pl.X = None; del pl; gc.collect()
 
@@ -167,23 +186,23 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
 
     return list(union_hvgs), grand_mean, grand_std
 
-def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel_size, target_sum, means, stds,
-                                  genes, min_ngenes_per_pixel, min_ntranscripts_per_pixel):
+def pixels_to_normedpixelmatrix(sid, pixels, target_sum, means, stds,
+                                genes, min_ngenes_per_pixel, min_ntranscripts_per_pixel):
     """
-    Rasterize one sample's transcripts to a log-normalized ``(y, x, gene)`` matrix.
+    Turn one sample's binned pixels into a log-normalized ``(y, x, gene)`` matrix.
 
-    Bins transcripts into square pixels, drops pixels failing the QC thresholds,
-    log-normalizes surviving pixels to ``target_sum``, restricts to ``genes``
-    (filling absent genes with zeros), and returns the pixel matrix alongside its
-    tissue mask. The dataset-wide ``means`` and ``stds`` are stored as attributes
-    on the matrix for later standardization (they are not applied here).
+    Drops pixels failing the QC thresholds, log-normalizes the survivors to
+    ``target_sum``, restricts to ``genes`` (filling absent genes with zeros), and
+    returns the pixel matrix alongside its tissue mask. The dataset-wide
+    ``means`` and ``stds`` are stored as attributes on the matrix for later
+    standardization (they are not applied here).
 
     Parameters
     ----------
     sid
         Sample ID; used to name the output arrays.
-    data
-        Transcript table for this sample.
+    pixels
+        This sample's `util.SparsePixels`, from `rasterize_all`.
     target_sum
         Per-pixel total-count normalization target.
     means, stds
@@ -197,17 +216,8 @@ def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel
         ``(mask, matrix)``: the boolean tissue mask and the normalized
         ``(y, x, gene)`` DataArray.
     """
-    logger.info(f'\tNumber of transcripts: {len(data)/1e6:.2f}M')
-
-    # process data
-    pixels = util.transcriptlist_to_sparsepixels(
-        data,
-        x_col,
-        y_col,
-        gene_col,
-        pixel_size=pixel_size
-    )
-    logger.info(f'\tMaking pixel list... {len(pixels.nonempty())} pixels.')
+    logger.info(f'\tNumber of transcripts: {pixels.ntranscripts/1e6:.2f}M')
+    logger.info(f'\t{len(pixels.nonempty())} non-empty pixels.')
 
     if settings.show_plots():
         occupied_x, occupied_y = pixels.coords_of(pixels.nonempty())
@@ -236,7 +246,7 @@ def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel
     s.attrs['stds'] = stds.reindex(s.marker.values).values.astype(np.float32)
     mask = util.sparsepixels_to_mask(rows, pixels.x, pixels.y)
     s.name = sid; mask.name = sid
-    del pixels; gc.collect()
+    gc.collect()
     logger.info(f'\tMaking pixel matrix... done. shape: {s.shape}')
 
     return mask, s.astype(np.float32)
@@ -247,10 +257,12 @@ def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_t
     """
     Shared driver that rasterizes and normalizes every sample to disk.
 
-    Backs `prepare_merfish` and `prepare_xenium5k`: computes the normalization
-    factor and dataset-wide gene set/moments once, then rasterizes and
-    normalizes each sample, writing its normalized matrix and mask under
-    ``outdir/normalized`` and ``outdir/masks``.
+    Backs `prepare_merfish` and `prepare_xenium5k`: bins every sample's
+    transcripts once, computes the normalization factor and dataset-wide gene
+    set/moments from those bins, then normalizes each sample, writing its matrix
+    and mask under ``outdir/normalized`` and ``outdir/masks``. The binned counts
+    are held in memory across all three passes; each sample's are released as
+    soon as its matrix has been written.
 
     Parameters
     ----------
@@ -265,31 +277,36 @@ def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_t
         logger.warning('No files found. Check your filepaths and try again.')
         return
 
+    logger.info('Binning transcripts to pixels...')
+    rasterized = rasterize_all(load, filepaths, x_col, y_col, gene_col, pixel_size=pixel_size)
+
     logger.info('Computing normalization factor...')
-    normfactor = med_ntranscripts(load, filepaths, x_col, y_col, pixel_size=pixel_size)
+    normfactor = med_ntranscripts(rasterized)
     logger.info('Finding HVGs and dataset-wide mean and variance per gene...')
-    hvgs, means, stds = get_sumstats(load, filepaths, normfactor, x_col, y_col, gene_col,
+    hvgs, means, stds = get_sumstats(rasterized, normfactor,
                                      n_top_genes_per_sample=n_top_genes_per_sample,
-                                     genes_to_add=genes_to_add, pixel_size=pixel_size,
+                                     genes_to_add=genes_to_add,
                                      min_ntranscripts_per_pixel=min_ntranscripts_per_pixel,
                                      min_ngenes_per_pixel=min_ngenes_per_pixel)
     logger.info(f'Final number of genes used = {len(hvgs)}')
 
-    logger.info('Rasterizing and normalizing...')
+    logger.info('Normalizing...')
     normdir = f'{outdir}/normalized'
     masksdir = f'{outdir}/masks'
     os.makedirs(normdir, exist_ok=True)
     os.makedirs(masksdir, exist_ok=True)
-    for i, filepath in enumerate(settings.progress(filepaths, name='rasterize & normalize')):
-        sid, data = load(filepath)
-        logger.info(f'Processing sample {i+1}/{len(filepaths)}: {sid}')
-        mask, pm = transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel_size,
-                                                       normfactor, means=means, stds=stds, genes=hvgs,
-                                                       min_ntranscripts_per_pixel=min_ntranscripts_per_pixel,
-                                                       min_ngenes_per_pixel=min_ngenes_per_pixel)
-        del data; gc.collect()
+    for i in settings.progress(range(len(rasterized)), name='normalize & write'):
+        sid, pixels = rasterized[i]
+        rasterized[i] = None   # this sample's bins are no longer needed after here
+        logger.info(f'Processing sample {i+1}/{len(rasterized)}: {sid}')
+        mask, pm = pixels_to_normedpixelmatrix(sid, pixels, normfactor, means=means, stds=stds,
+                                               genes=hvgs,
+                                               min_ntranscripts_per_pixel=min_ntranscripts_per_pixel,
+                                               min_ngenes_per_pixel=min_ngenes_per_pixel)
+        del pixels; gc.collect()
         util.write_xarray(mask, f'{masksdir}/{pm.name}.nc')
         util.write_xarray(pm, f'{normdir}/{pm.name}.nc')
+        del mask, pm; gc.collect()
 
 def prepare_xenium5k(load, filepaths, x_col, y_col, gene_col, n_top_genes_per_sample, outdir,
                      pixel_size=10, genes_to_add=[],

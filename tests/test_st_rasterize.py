@@ -1,11 +1,12 @@
 """Characterization tests for the sparse rasterization path in vima.pp.st.
 
-`st.get_sumstats` and `st.transcriptlist_to_normedpixelmatrix` used to build a
-dense pixels-by-genes pandas table and pivot it. They now keep the counts in a
-scipy CSR matrix throughout, which is ~14x faster and ~5x lighter on a Xenium 5K
-panel. The rewrite is meant to be output-preserving, so the pre-rewrite
-implementations are reproduced verbatim below and every test asserts the new
-path still agrees with them.
+`st.get_sumstats` and the final-matrix step used to build a dense
+pixels-by-genes pandas table and pivot it, once per pass over the samples. They
+now bin each sample once into a scipy CSR matrix and share it across all three
+passes, which is ~13x faster and ~5x lighter on a Xenium 5K panel. Both changes
+are meant to be output-preserving, so the pre-rewrite implementations are
+reproduced verbatim below and every test asserts the current path still agrees
+with them.
 
 The pixel matrices and masks must match *bit for bit*; the pooled moments are
 allowed a tiny tolerance, because summing a column of a CSR with `bincount`
@@ -188,10 +189,15 @@ def assert_matrices_identical(got, exp):
 # --------------------------------------------------------------------------
 # tests
 # --------------------------------------------------------------------------
-def test_med_ntranscripts_matches_dense(samples, tmp_path):
-    paths = list(samples)
+def rasterize(samples):
+    """Bin the fixture samples the way the driver does."""
     load = lambda sid: (sid, samples[sid])
-    got = st.med_ntranscripts(load, paths, "x_location", "y_location", pixel_size=PIXEL_SIZE)
+    return st.rasterize_all(load, list(samples), "x_location", "y_location",
+                            "feature_name", pixel_size=PIXEL_SIZE)
+
+
+def test_med_ntranscripts_matches_dense(samples):
+    got = st.med_ntranscripts(rasterize(samples))
     exp = np.mean([ref_med_ntranscripts(df, "x_location", "y_location") for df in samples.values()])
     assert got == exp
 
@@ -199,13 +205,10 @@ def test_med_ntranscripts_matches_dense(samples, tmp_path):
 def test_sumstats_matches_dense(samples):
     """HVG selection is exact; pooled moments match to float32 rounding."""
     pytest.importorskip("skmisc", reason="seurat_v3 HVG selection needs scikit-misc")
-    paths = list(samples)
-    load = lambda sid: (sid, samples[sid])
     n_top = 15
 
     hvgs, mean, std = st.get_sumstats(
-        load, paths, TARGET_SUM, "x_location", "y_location", "feature_name",
-        n_top_genes_per_sample=n_top, pixel_size=PIXEL_SIZE,
+        rasterize(samples), TARGET_SUM, n_top_genes_per_sample=n_top,
         min_ntranscripts_per_pixel=MIN_NTX, min_ngenes_per_pixel=MIN_NGENES)
 
     means, stds, npix, exp_hvgs, allgenes = [], [], [], set(), set()
@@ -232,9 +235,10 @@ def test_pixelmatrix_is_bitwise_identical(samples, sid):
     means = pd.Series(np.linspace(0.1, 2.0, len(genes)), index=genes)
     stds = pd.Series(np.linspace(0.5, 1.5, len(genes)), index=genes)
 
-    mask, pm = st.transcriptlist_to_normedpixelmatrix(
-        sid, samples[sid], "x_location", "y_location", "feature_name", PIXEL_SIZE,
-        TARGET_SUM, means=means, stds=stds, genes=genes,
+    pixels = util.transcriptlist_to_sparsepixels(
+        samples[sid], "x_location", "y_location", "feature_name", pixel_size=PIXEL_SIZE)
+    mask, pm = st.pixels_to_normedpixelmatrix(
+        sid, pixels, TARGET_SUM, means=means, stds=stds, genes=genes,
         min_ngenes_per_pixel=MIN_NGENES, min_ntranscripts_per_pixel=MIN_NTX)
     exp_mask, exp_pm = ref_normedpixelmatrix(
         sid, samples[sid], "x_location", "y_location", "feature_name",
@@ -258,9 +262,10 @@ def test_genes_absent_from_a_sample_become_zero_slices(samples):
     assert not set(absent) & set(samples["s3"].feature_name.unique())
     moments = pd.Series(1.0, index=genes)
 
-    _, pm = st.transcriptlist_to_normedpixelmatrix(
-        "s3", samples["s3"], "x_location", "y_location", "feature_name", PIXEL_SIZE,
-        TARGET_SUM, means=moments, stds=moments, genes=genes,
+    pixels = util.transcriptlist_to_sparsepixels(
+        samples["s3"], "x_location", "y_location", "feature_name", pixel_size=PIXEL_SIZE)
+    _, pm = st.pixels_to_normedpixelmatrix(
+        "s3", pixels, TARGET_SUM, means=moments, stds=moments, genes=genes,
         min_ngenes_per_pixel=MIN_NGENES, min_ntranscripts_per_pixel=MIN_NTX)
 
     assert list(pm.marker.values) == sorted(genes)
@@ -272,9 +277,10 @@ def test_unrequested_genes_are_dropped(samples):
     """Asking for a subset yields exactly that subset, sorted."""
     genes = ["G05", "G00", "G31"]
     moments = pd.Series(1.0, index=ALL_GENES)
-    _, pm = st.transcriptlist_to_normedpixelmatrix(
-        "s1", samples["s1"], "x_location", "y_location", "feature_name", PIXEL_SIZE,
-        TARGET_SUM, means=moments, stds=moments, genes=genes,
+    pixels = util.transcriptlist_to_sparsepixels(
+        samples["s1"], "x_location", "y_location", "feature_name", pixel_size=PIXEL_SIZE)
+    _, pm = st.pixels_to_normedpixelmatrix(
+        "s1", pixels, TARGET_SUM, means=moments, stds=moments, genes=genes,
         min_ngenes_per_pixel=MIN_NGENES, min_ntranscripts_per_pixel=MIN_NTX)
     assert list(pm.marker.values) == ["G00", "G05", "G31"]
 
@@ -315,3 +321,43 @@ def test_sparse_counts_match_the_dense_pixel_table(samples):
                 + (exp.pixel_y.to_numpy() // PIXEL_SIZE - pixels.y[0] // PIXEL_SIZE))
         got = np.asarray(pixels.counts[rows].todense())
         assert np.array_equal(got, exp[genes].to_numpy().astype(np.float32)), sid
+
+
+def test_prepare_xenium5k_end_to_end_matches_dense(samples, tmp_path):
+    """The whole driver, sharing one binning across all three passes, still
+    writes what the original three-independent-passes pipeline wrote."""
+    pytest.importorskip("skmisc", reason="seurat_v3 HVG selection needs scikit-misc")
+    n_top = 15
+    outdir = str(tmp_path / "out")
+    st.prepare_xenium5k(
+        load=lambda sid: (sid, samples[sid]), filepaths=list(samples),
+        x_col="x_location", y_col="y_location", gene_col="feature_name",
+        n_top_genes_per_sample=n_top, outdir=outdir, pixel_size=PIXEL_SIZE,
+        min_ntranscripts_per_pixel=MIN_NTX, min_ngenes_per_pixel=MIN_NGENES)
+
+    # rebuild the expected outputs through the pre-rewrite code path
+    exp_norm = np.mean([ref_med_ntranscripts(df, "x_location", "y_location")
+                        for df in samples.values()])
+    means, stds, npix, hvgs, allgenes = [], [], [], set(), set()
+    for df in samples.values():
+        m, s_, n, h, g = ref_sample_sumstats(df, "x_location", "y_location", "feature_name",
+                                             exp_norm, n_top)
+        means.append(m); stds.append(s_); npix.append(n)
+        hvgs.update(h); allgenes.update(g)
+    exp_mean, exp_std = util.pool_moments(
+        pd.concat([m.reindex(index=allgenes, fill_value=0) for m in means], axis=1),
+        pd.concat([s_.reindex(index=allgenes, fill_value=0) for s_ in stds], axis=1),
+        npix)
+
+    for sid, df in samples.items():
+        exp_mask, exp_pm = ref_normedpixelmatrix(sid, df, "x_location", "y_location",
+                                                 "feature_name", exp_norm, exp_mean,
+                                                 exp_std, list(hvgs))
+        got_pm = xr.open_dataarray(f"{outdir}/normalized/{sid}.nc")
+        got_mask = xr.open_dataarray(f"{outdir}/masks/{sid}.nc")
+        try:
+            assert list(got_pm.marker.values) == list(exp_pm.marker.values), sid
+            assert np.array_equal(got_pm.values, exp_pm.values), sid
+            assert np.array_equal(got_mask.values, exp_mask.values), sid
+        finally:
+            got_pm.close(); got_mask.close()

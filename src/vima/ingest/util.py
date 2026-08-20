@@ -80,6 +80,7 @@ class SparsePixels(NamedTuple):
     genes: pd.Index         # gene named by each column
     x: np.ndarray           # x coordinate of each grid column, ascending
     y: np.ndarray           # y coordinate of each grid row, ascending
+    ntranscripts: int       # transcripts binned, excluding any with no gene
 
     def coords_of(self, rows):
         """The ``(x, y)`` coordinates of the given rows of ``counts``."""
@@ -88,6 +89,11 @@ class SparsePixels(NamedTuple):
     def nonempty(self):
         """Row indices of the pixels holding at least one transcript."""
         return np.flatnonzero(np.diff(self.counts.indptr) > 0)
+
+    def nbytes(self):
+        """Bytes held by the sparse counts."""
+        c = self.counts
+        return c.data.nbytes + c.indices.nbytes + c.indptr.nbytes
 
 
 def _gene_codes(genes):
@@ -132,7 +138,8 @@ def transcriptlist_to_sparsepixels(transcriptlist, x_col, y_col, gene_col, pixel
                            shape=(nx * ny, len(genes)))
     return SparsePixels(counts, genes,
                         np.arange(x0, x1 + 1) * pixel_size,
-                        np.arange(y0, y1 + 1) * pixel_size)
+                        np.arange(y0, y1 + 1) * pixel_size,
+                        len(rows))
 
 
 def qc_pixels(counts, min_ntranscripts_per_pixel, min_ngenes_per_pixel):
