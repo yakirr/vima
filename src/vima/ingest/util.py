@@ -2,9 +2,10 @@
 import numpy as np
 import pandas as pd
 import xarray as xr
+import scipy.sparse as sp
 import gc
+from typing import NamedTuple
 import matplotlib.pyplot as plt
-from .._settings import logger
 
 compression = {'zlib': True, 'complevel': 2} # settings for writing xarrays
 
@@ -64,58 +65,145 @@ def pool_moments(means_df, stds_df, npixels):
 ###########################################
 # for creating raw pixel files
 ###########################################
-def transcriptlist_to_pixellist(transcriptlist, x_col, y_col, gene_col, pixel_size=10):
+class SparsePixels(NamedTuple):
     """
-    Bin a transcript table into a per-pixel gene-count table.
+    Transcripts binned to a pixel grid, as a sparse pixel-by-gene count matrix.
+
+    ``counts`` spans the sample's full bounding rectangle -- one row per grid
+    position, x-major, so row ``i * len(y) + j`` holds pixel ``(x[i], y[j])``.
+    Positions with no transcripts are empty rows rather than stored zeros, which
+    is what keeps a large panel tractable: at Xenium 5K densities the dense
+    equivalent is ~95-99% zeros and tens of GB per sample.
+    """
+
+    counts: sp.csr_matrix   # (len(x) * len(y), len(genes)), float32
+    genes: pd.Index         # gene named by each column
+    x: np.ndarray           # x coordinate of each grid column, ascending
+    y: np.ndarray           # y coordinate of each grid row, ascending
+
+    def coords_of(self, rows):
+        """The ``(x, y)`` coordinates of the given rows of ``counts``."""
+        return self.x[rows // len(self.y)], self.y[rows % len(self.y)]
+
+    def nonempty(self):
+        """Row indices of the pixels holding at least one transcript."""
+        return np.flatnonzero(np.diff(self.counts.indptr) > 0)
+
+
+def _gene_codes(genes):
+    """
+    Per-transcript integer codes plus the gene index those codes point into.
+
+    Reproduces the column set that ``groupby(...).value_counts().unstack()``
+    used to produce: a categorical keeps its declared categories -- including
+    unobserved ones, as all-zero columns -- in category order, while any other
+    dtype contributes its observed values in sorted order. Transcripts with a
+    missing gene get code ``-1``; the caller drops them, as ``value_counts`` did.
+    """
+    if isinstance(genes.dtype, pd.CategoricalDtype):
+        return genes.cat.codes.to_numpy(), pd.Index(genes.cat.categories)
+    codes, uniques = pd.factorize(genes.to_numpy(), sort=True)
+    return codes, pd.Index(uniques)
+
+
+def transcriptlist_to_sparsepixels(transcriptlist, x_col, y_col, gene_col, pixel_size=10):
+    """
+    Bin a transcript table into a sparse per-pixel gene-count table.
 
     Snaps each transcript to a ``pixel_size`` grid and counts transcripts per
-    gene per pixel, returning a table with ``pixel_x``/``pixel_y`` columns and
-    one count column per gene. Empty rows are added so every grid coordinate
-    between the min and max is represented.
+    gene per pixel. The grid covers every coordinate between the min and max in
+    each axis, so it is regular by construction and needs no padding rows.
     """
-    # adds dummy rows such that there is at least one entry for every possible x- and y- value
-    # between the min and max values
-    def complete(pl, colname, genes, fill=0.):
-        vals = np.sort(pl[colname].unique())
-        min_col = vals.min() // 1
-        max_col = vals.max() // 1
-        delta = int(min(vals[1:] - vals[:-1]))
-        full_range = list(np.arange(min_col, max_col + 1, delta))
-        locs_toadd = np.setdiff1d(full_range, vals)
-        logger.debug(f'\tadding {colname}={locs_toadd}')
-        toadd = pl.iloc[:len(locs_toadd)].copy()
-        toadd[colname] = locs_toadd
-        toadd[genes] = fill
-        return pd.concat([pl, toadd], axis=0, ignore_index=True)
+    ix = (transcriptlist[x_col].to_numpy() / pixel_size).astype(int)
+    iy = (transcriptlist[y_col].to_numpy() / pixel_size).astype(int)
+    codes, genes = _gene_codes(transcriptlist[gene_col])
 
-    transcriptlist = transcriptlist[[x_col, y_col, gene_col]].copy()
-    transcriptlist['pixel_x'] = (transcriptlist[x_col] / pixel_size).astype(int) * pixel_size
-    transcriptlist['pixel_y'] = (transcriptlist[y_col] / pixel_size).astype(int) * pixel_size
+    x0, x1, y0, y1 = ix.min(), ix.max(), iy.min(), iy.max()
+    nx, ny = int(x1 - x0) + 1, int(y1 - y0) + 1
+    rows = (ix.astype(np.int64) - x0) * ny + (iy - y0)
+    del ix, iy; gc.collect()
 
-    pixels = transcriptlist.groupby(['pixel_x', 'pixel_y'])[gene_col].value_counts().unstack(fill_value=0)
-    pixels.reset_index(inplace=True)
-    pl = pixels.rename_axis(None, axis=1)
-    genes = pl.columns[2:]
+    if (codes < 0).any():   # transcripts with no gene assigned
+        keep = codes >= 0
+        rows, codes = rows[keep], codes[keep]
 
-    return complete(complete(pl, 'pixel_x', genes), 'pixel_y', genes)
+    # duplicate (pixel, gene) pairs are summed by the coo -> csr conversion
+    counts = sp.csr_matrix((np.ones(len(rows), np.float32), (rows, codes)),
+                           shape=(nx * ny, len(genes)))
+    return SparsePixels(counts, genes,
+                        np.arange(x0, x1 + 1) * pixel_size,
+                        np.arange(y0, y1 + 1) * pixel_size)
 
-def df_to_xarray32(df):
-    """Convert a pivoted pixel DataFrame into a float32 ``(y, x, marker)`` DataArray."""
-    markers = df.columns.get_level_values('markers').unique()
+
+def qc_pixels(counts, min_ntranscripts_per_pixel, min_ngenes_per_pixel):
+    """Mask of the pixels passing QC, plus every pixel's total transcript count."""
+    totals = np.asarray(counts.sum(axis=1)).ravel()
+    ngenes = np.diff(counts.indptr)     # no explicit zeros are ever stored
+    keep = (totals >= min_ntranscripts_per_pixel) & (ngenes >= min_ngenes_per_pixel)
+    return keep, totals
+
+
+def lognormalize(counts, totals, target_sum):
+    """
+    Total-count normalize each pixel to ``target_sum``, then ``log1p``.
+
+    Only the stored entries are touched, since ``log1p(0) == 0`` leaves empty
+    pixels empty. Arithmetic is float64 in the same order as the pandas
+    expression this replaced (divide by the pixel total, then scale), so the
+    result is bit-for-bit what the dense path produced.
+    """
+    X = counts.astype(np.float64)
+    rowsum = np.repeat(totals.astype(np.float64), np.diff(X.indptr))
+    X.data = np.divide(X.data, rowsum, out=np.zeros_like(X.data), where=rowsum > 0) * target_sum
+    np.log1p(X.data, out=X.data)
+    return X
+
+
+def sparse_moments(X):
+    """Per-column mean and population standard deviation of a sparse matrix."""
+    n = X.shape[0]
+    data = X.data.astype(np.float64)
+    total = np.bincount(X.indices, weights=data, minlength=X.shape[1])
+    total_sq = np.bincount(X.indices, weights=data * data, minlength=X.shape[1])
+    mean = total / n
+    return mean, np.sqrt(np.maximum(total_sq / n - mean ** 2, 0.0))
+
+
+def sparsepixels_to_pixelmatrix(values, source_genes, rows, x, y, markers):
+    """
+    Scatter a sparse ``(pixel, gene)`` matrix into a dense ``(y, x, marker)`` DataArray.
+
+    ``values`` holds one row per surviving pixel and ``rows`` says where each
+    belongs in the x-major grid spanned by ``x`` and ``y``; every unlisted grid
+    position is left zero. Columns are pulled from ``source_genes`` in
+    ``markers`` order, and markers absent from ``source_genes`` come out as zeros.
+    """
+    markers = pd.Index(markers)
+    cols = source_genes.get_indexer(markers)
+    present = np.flatnonzero(cols >= 0)
+
+    dense = np.zeros((len(x) * len(y), len(markers)), np.float32)
+    dense[np.ix_(rows, present)] = values[:, cols[present]].toarray()
+
     return xr.DataArray(
-            df.values.reshape((len(df), len(markers), -1)).transpose(0,2,1),
-            coords={'x': df.columns.get_level_values('pixel_x').unique().values, 'y': df.index.values, 'marker': markers.values},
-            dims=['y', 'x', 'marker']
-        ).astype(np.float32)
+        dense.reshape(len(x), len(y), len(markers)).transpose(1, 0, 2),
+        coords={'x': x, 'y': y, 'marker': markers.values},
+        dims=['y', 'x', 'marker'],
+    )
 
-def pixellist_to_pixelmatrix(pl, markers):
-    """Pivot a per-pixel table into a dense ``(y, x, marker)`` DataArray, filling gaps with zeros."""
-    # pivot in pandas
-    s = pd.pivot_table(pl, values=markers, index='pixel_y', columns='pixel_x').fillna(0)
-    s.columns.names = ['markers', 'pixel_x']
 
-    # convert to xarray
-    return df_to_xarray32(s)
+def sparsepixels_to_mask(rows, x, y):
+    """Boolean ``(y, x)`` tissue mask marking the given rows of the pixel grid."""
+    flat = np.zeros(len(x) * len(y), bool)
+    flat[rows] = True
+    return xr.DataArray(
+        flat.reshape(len(x), len(y)).T,
+        # the scalar 'marker' coord is a leftover of the old pivot-and-squeeze
+        # construction; preserved so masks written now match those written before.
+        coords={'x': x, 'y': y, 'marker': 'nonempty'},
+        dims=['y', 'x'],
+    )
+
 
 def downsample(sample, factor, aggregate=np.mean):
     """Downsample a ``(y, x, marker)`` array by aggregating over ``factor``-by-``factor`` pixel blocks."""

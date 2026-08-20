@@ -18,20 +18,18 @@ def med_ntranscripts(load, filepaths, x_col, y_col, pixel_size=10):
     medians = []
     for i, filepath in enumerate(settings.progress(filepaths, name='median #transcripts')):
         sid, df = load(filepath)
+        ntranscripts = len(df)
 
-        df["px"] = (df[x_col] // pixel_size).astype(np.int32)
-        df["py"] = (df[y_col] // pixel_size).astype(np.int32)
-        pg = (
-            df
-            .groupby(["px", "py"])
-            .size()
-            .reset_index(name="txcount")
-        )
-        med = pg[pg.txcount > 10].txcount.median()
-        logger.info(f"\tSample {i+1}/{len(filepaths)}: {sid} ({len(df)/1e6:.2f}M tx) "
+        px = (df[x_col].to_numpy() // pixel_size).astype(np.int64)
+        py = (df[y_col].to_numpy() // pixel_size).astype(np.int64)
+        ny = int(py.max() - py.min()) + 1
+        txcount = np.bincount((px - px.min()) * ny + (py - py.min()))
+
+        med = np.median(txcount[txcount > 10])
+        logger.info(f"\tSample {i+1}/{len(filepaths)}: {sid} ({ntranscripts/1e6:.2f}M tx) "
                     f"→ median {med} transcripts per pixel with >=10 transcripts")
         medians.append(med)
-        del df, pg; gc.collect()
+        del df, px, py, txcount; gc.collect()
     return np.mean(np.array(medians))
 
 def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_genes_per_sample=200, genes_to_add=[],
@@ -76,24 +74,31 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
         ntranscripts = len(transcripts)
 
         # create pixellist
-        pl = util.transcriptlist_to_pixellist(transcripts, x_col, y_col, gene_col, pixel_size=pixel_size)
+        pixels = util.transcriptlist_to_sparsepixels(transcripts, x_col, y_col, gene_col, pixel_size=pixel_size)
         del transcripts; gc.collect()
-        
-        # create scanpy object and filter empty/near-empty pixels
-        genes = pl.columns[2:]
-        obs = pl[['pixel_x', 'pixel_y']].copy()
-        obs.index = obs.index.astype(str)
-        pl = sc.AnnData(pl[genes].values.astype(np.float32), var=pd.DataFrame(index=genes), obs=obs)
-        sc.pp.filter_cells(pl, min_counts=min_ntranscripts_per_pixel, inplace=True)
-        sc.pp.filter_cells(pl, min_genes=min_ngenes_per_pixel, inplace=True)
-        
+
+        # filter empty/near-empty pixels; both thresholds are per-pixel, so
+        # applying them together matches filtering on one and then the other
+        genes = pixels.genes
+        keep, totals = util.qc_pixels(pixels.counts, min_ntranscripts_per_pixel, min_ngenes_per_pixel)
+        rows = np.flatnonzero(keep)
+        counts = pixels.counts[keep]
+
         # compute moments
-        X = pl.X / pl.X.sum(axis=1, keepdims=True) * target_sum
-        X = np.log1p(X)
-        means.append(pd.Series(np.array(X.mean(axis=0, dtype=np.float64)).squeeze(), index=genes))
-        stds.append(pd.Series(np.array(X.std(axis=0, dtype=np.float64)).squeeze(), index=genes))
-        npixels.append(pl.n_obs)
+        X = util.lognormalize(counts, totals[keep], target_sum)
+        mean, std = util.sparse_moments(X)
+        means.append(pd.Series(mean, index=genes))
+        stds.append(pd.Series(std, index=genes))
+        npixels.append(len(rows))
         union_allgenes.update(genes)
+        del X; gc.collect()
+
+        # create scanpy object over the surviving pixels
+        pixel_x, pixel_y = pixels.coords_of(rows)
+        obs = pd.DataFrame({'pixel_x': pixel_x, 'pixel_y': pixel_y})
+        obs.index = obs.index.astype(str)
+        pl = sc.AnnData(counts, var=pd.DataFrame(index=genes), obs=obs)
+        del pixels, counts; gc.collect()
 
         # QC genes and compute HVGs for this sample
         sc.pp.filter_genes(pl, min_cells=min_npixels, inplace=True)
@@ -154,7 +159,7 @@ def get_sumstats(load, filepaths, target_sum, x_col, y_col, gene_col, n_top_gene
             union_hvgs.update(genes)
             logger.info(f'\tSample {i+1}/{len(filepaths)}: {sid} ({ntranscripts/1e6:.2f}M tx) → Using all {len(genes)} genes.')
 
-        pl.X = None; del pl; del X; gc.collect()
+        pl.X = None; del pl; gc.collect()
 
     means_df = pd.concat([m.reindex(index=union_allgenes, fill_value=0) for m in means], axis=1)
     stds_df  = pd.concat([s.reindex(index=union_allgenes, fill_value=0) for s in stds],  axis=1)
@@ -195,46 +200,45 @@ def transcriptlist_to_normedpixelmatrix(sid, data, x_col, y_col, gene_col, pixel
     logger.info(f'\tNumber of transcripts: {len(data)/1e6:.2f}M')
 
     # process data
-    pl = util.transcriptlist_to_pixellist(
+    pixels = util.transcriptlist_to_sparsepixels(
         data,
         x_col,
         y_col,
         gene_col,
         pixel_size=pixel_size
     )
-    markers = pl.columns[2:]
-    all_x = np.sort(pl['pixel_x'].unique())
-    all_y = np.sort(pl['pixel_y'].unique())
-    logger.info(f'\tMaking pixel list... {len(pl)} pixels.')
+    logger.info(f'\tMaking pixel list... {len(pixels.nonempty())} pixels.')
 
     if settings.show_plots():
+        occupied_x, occupied_y = pixels.coords_of(pixels.nonempty())
         plt.figure(figsize=(5,5))
-        plt.scatter(pl.pixel_x, pl.pixel_y, c='gray', s=0.1, alpha=0.2)
-    pl = pl[(pl[markers] != 0).sum(axis=1) >= min_ngenes_per_pixel]
-    pl = pl[(pl[markers].sum(axis=1) >= min_ntranscripts_per_pixel) ]#& (pl[list(set(markers) & set(genes))].sum(axis=1) > 0)]
+        plt.scatter(occupied_x, occupied_y, c='gray', s=0.1, alpha=0.2)
+    # both thresholds are per-pixel, so applying them together matches
+    # filtering on one and then the other
+    keep, totals = util.qc_pixels(pixels.counts, min_ntranscripts_per_pixel, min_ngenes_per_pixel)
+    rows = np.flatnonzero(keep)
     if settings.show_plots():
-        plt.scatter(pl.pixel_x, pl.pixel_y, c=pl[markers].sum(axis=1), s=0.1, alpha=0.8, vmin=0, vmax=100)
+        kept_x, kept_y = pixels.coords_of(rows)
+        plt.scatter(kept_x, kept_y, c=totals[rows], s=0.1, alpha=0.8, vmin=0, vmax=100)
         plt.gca().set_aspect('equal'); plt.title('transcript density (gray = failed qc)'); plt.axis('off')
         settings.show(f'transcript_density_{sid}')
-    logger.info(f'\t{len(pl)} pixels after QC.')
+    logger.info(f'\t{len(rows)} pixels after QC.')
 
     logger.info('\tLog-normalizing...')
-    pl[markers] = pl[markers].div(pl[markers].sum(axis=1), axis=0).fillna(0) * target_sum
-    pl[markers] = np.log1p(pl[markers])
+    X = util.lognormalize(pixels.counts[keep], totals[keep], target_sum)
 
     logger.info(f'\trestricting to {len(genes)} genes')
-    pl = pl.reindex(columns=['pixel_x', 'pixel_y'] + genes, fill_value=0) # zeros for genes not present in this sample
-    mask_pl = pl[['pixel_x', 'pixel_y']].copy()
-    mask_pl['nonempty'] = 1
-    
-    s = util.pixellist_to_pixelmatrix(pl, genes).reindex({'x': all_x, 'y': all_y}, fill_value=0)
+    # sorted to match the marker order the pandas pivot used to impose; genes
+    # absent from this sample are scattered in as zeros
+    s = util.sparsepixels_to_pixelmatrix(X, pixels.genes, rows, pixels.x, pixels.y, sorted(genes))
+    del X; gc.collect()
     s.attrs['means'] = means.reindex(s.marker.values).values.astype(np.float32)
     s.attrs['stds'] = stds.reindex(s.marker.values).values.astype(np.float32)
-    mask = util.pixellist_to_pixelmatrix(mask_pl, ['nonempty']).squeeze().astype(bool).reindex({'x': all_x, 'y': all_y}, fill_value=False)
+    mask = util.sparsepixels_to_mask(rows, pixels.x, pixels.y)
     s.name = sid; mask.name = sid
-    gc.collect()
+    del pixels; gc.collect()
     logger.info(f'\tMaking pixel matrix... done. shape: {s.shape}')
-    
+
     return mask, s.astype(np.float32)
 
 def rasterize_and_normalize_generic(load, filepaths, x_col, y_col, gene_col, n_top_genes_per_sample, pixel_size, outdir,
